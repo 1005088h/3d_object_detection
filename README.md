@@ -50,11 +50,11 @@ PV-RCNN and SA-SSD can be added in to try.
 
 
 ## TODO
-Add kitti evaluation. Difficulty depends on number of points. Other dataset doesn't have occluded and truncated info
-Add multi-class support. Currenltly dataloader can load multi-class data but anchor generator and loss generator only support one class
-Adapt to PV-RCNN and SA-SSD
-Add and test data sampling
-Add and test data data augmentation
+* Add kitti evaluation. Difficulty depends on number of points. Other dataset doesn't have occluded and truncated info
+* Add multi-class support. Currenltly dataloader can load multi-class data but anchor generator and loss generator only support one class
+* Adapt to PV-RCNN and SA-SSD
+* Add and test data sampling
+* Add and test data data augmentation
 
 
 
