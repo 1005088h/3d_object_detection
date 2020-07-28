@@ -1,5 +1,5 @@
 ## Introduction
-This repo is refactored from SECOND framework and make it more clean, readable and extendable. It decouple the loss and prediction from network, refactor the dataloader and remove unused features. Dataset bouding box coordinate system are converted to lidar coordinate system by info generator. The value order are: location: x, y, z. dimension: length, width and height. Rotaion in KITTI and nuScene are positive in clockwise refering to axis pointing to the left. infor generator convert the rotaion to anti-clockwise refering to lidar x axis. The rotaion operation in the framework are all positive in anti-clockwise ranging from -pi to pi.
+This repository is refactored from SECOND framework to make it more clean, readable and extendable. It decouples the loss and prediction from network, refactor the dataloader and remove unused features. Dataset bouding box coordinate system are converted to lidar coordinate system by info generator. The value order are: location: x, y, z. dimension: length, width and height. Rotaion in KITTI and nuScene are positive in clockwise refering to axis pointing to the left. info generator convert the rotaion to anti-clockwise refering to lidar x axis. The rotaion operation in the framework are all positive in anti-clockwise ranging from -pi to pi.
 
 ## Environment
 NOTE: Not all libs are necessary in the environment file
@@ -14,7 +14,7 @@ conda env create -f environment.yml
 ```
 https://drive.google.com/drive/folders/1ei3YfRoSmS6koc1rdVrUAP_L6NY7wD-7?usp=sharing
 ```
-2. Four folders can be found in the link: mini_train, mini_val, train and val. Down and put it under your favorite folder as  dataset_dir
+2. Four folders can be found in the link: mini_train, mini_val, train and val. Download and put it under your favorite folder as  dataset_dir
 
 3. Under info generator folder, generator data info from dataset_dir
 ```
