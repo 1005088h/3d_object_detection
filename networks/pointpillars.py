@@ -18,12 +18,18 @@ class PointNet(nn.Module):
 
         # Create PillarFeatureNet layers
         in_channels = num_input_features
-        out_channels = 64
-        model = [nn.Conv1d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
+        out_channels = 128
+        model = [nn.Conv1d(in_channels, 64, kernel_size=1, padding=0, bias=False),
+                 nn.BatchNorm1d(64),
+                 nn.ReLU(True)]
+
+        self.pfn_layers1 = nn.Sequential(*model)
+
+        model = [nn.Conv1d(64, out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(out_channels),
                  nn.ReLU(True)]
 
-        self.pfn_layers = nn.Sequential(*model)
+        self.pfn_layers2 = nn.Sequential(*model)
         self.out_channels = out_channels
 
     def forward(self, voxels, num_point_per_voxel, coors):
@@ -53,7 +59,8 @@ class PointNet(nn.Module):
 
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
-        x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
+        x = self.pfn_layers1(x)
+        x = self.pfn_layers2(x).permute(0, 2, 1).contiguous()
         x_max = torch.max(x, dim=1, keepdim=True)[0]
 
         return x_max.squeeze()
@@ -109,14 +116,28 @@ class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
 
+        layer_nums = [3, 3, 3]
+        layer_strides = [2, 2, 2]
+        num_filters = [128, 128, 256]
+        upsample_strides = [1, 2, 4]
+        num_upsample_filters = [128, 128, 128]
+        '''
         layer_nums = [3, 5, 5]
         layer_strides = [2, 2, 2]
         num_filters = [64, 128, 256]
         upsample_strides = [1, 2, 4]
-        num_upsample_filters = [128, 128, 128]
+        num_upsample_filters = [64, 128, 128]
+        '''
         num_input_filters = num_rpn_input_filters
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
+
+        model = []
+        for i in range(2):
+            model += [nn.Conv2d(num_input_filters, num_input_filters, 3, padding=1),
+                      nn.BatchNorm2d(num_input_filters),
+                      nn.ReLU()]
+        self.block0 = Sequential(*model)
 
         model = [nn.ZeroPad2d(1),
                  nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2),
@@ -175,6 +196,7 @@ class RPN(nn.Module):
             self.conv_dir_cls = nn.Conv2d(sum(num_upsample_filters), num_anchor_per_loc * 2, 1)
 
     def forward(self, x):
+        x = self.block0(x)
         x = self.block1(x)
         up1 = self.deconv1(x)
         x = self.block2(x)
@@ -224,4 +246,5 @@ class PointPillars(nn.Module):
         preds_dict = self.rpn(spatial_features)
 
         return preds_dict
+
 
