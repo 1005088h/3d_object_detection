@@ -20,15 +20,15 @@ class LossGenerator:
         self._cls_loss_weight = 1.0
         self._direction_loss_weight = 0.2
         self._use_direction_classifier = True
+        self.device = config['device']
 
     def generate(self, preds_dict, example):
         # prepare loss inputs
-        labels = torch.from_numpy(example['labels']).cuda()
-        reg_targets = torch.from_numpy(example['bbox_targets']).cuda()
-        voxels = torch.from_numpy(example['voxels']).cuda()
+        labels = torch.from_numpy(example['labels']).to(self.device)
+        reg_targets = torch.from_numpy(example['bbox_targets']).to(self.device)
 
         # normalization weights
-        cls_weights, reg_weights, cared = self.prepare_loss_weights(labels, dtype=voxels.dtype)
+        cls_weights, reg_weights, cared = self.prepare_loss_weights(labels, dtype=reg_targets.dtype)
         cls_targets = labels * cared.type_as(labels)
         cls_preds = preds_dict['cls_preds']
         box_preds = preds_dict['box_preds']
@@ -249,3 +249,4 @@ def _get_pos_neg_loss(cls_loss, labels):
         cls_pos_loss = cls_loss[..., 1:].sum() / batch_size
         cls_neg_loss = cls_loss[..., 0].sum() / batch_size
     return cls_pos_loss, cls_neg_loss
+

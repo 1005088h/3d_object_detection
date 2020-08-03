@@ -17,11 +17,15 @@ def train(config_path=None):
     with open('config.json', 'r') as f:
         config = json.load(f)
 
+    device = torch.device("cuda:0")
+    config['device'] = device
     voxel_generator = VoxelGenerator(config)
     anchor_assigner = AnchorAssigner(config)
     loss_generator = LossGenerator(config)
     metrics = Metric()
+
     train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True)
+
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -43,7 +47,7 @@ def train(config_path=None):
         collate_fn=_merge_second_batch)
 
     net = PointPillars(config)
-    net.cuda()
+    net.to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
     old_step = 1
     lowest_loss = 9999999
@@ -57,7 +61,7 @@ def train(config_path=None):
         lowest_loss = checkpoint['loss']
         print('model loaded')
 
-    # optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
+    optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
     print("num_trainable parameters:", len(list(net.parameters())))
 
     net.train()
@@ -82,7 +86,7 @@ def train(config_path=None):
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
+        # torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
         optimizer.step()
 
         labels = example['labels']
@@ -109,6 +113,24 @@ def train(config_path=None):
             avg_time = 0
             print(metrics)
             metrics.clear()
+        '''
+        if step % eval_step == 0:
+            net.eval()
+            print("#################################")
+            print("# EVAL")
+            print("#################################")
+            dt_annos = []
+
+            for example in iter(eval_dataloader):
+                preds_dict = net(example)
+                dt_annos += inference.inter(example, preds_dict)
+            
+            gt_annos = [info["annos"] for info in eval_dataset._infos]
+
+            result = get_official_eval_result(gt_annos, dt_annos, class_names, return_data=True)
+            print(result)
+            net.train()
+            '''
 
 
 def infer():

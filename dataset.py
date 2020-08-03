@@ -2,6 +2,7 @@ from torch.utils.data import Dataset
 import pickle
 import numpy as np
 import box_np_ops
+import torch
 
 
 class GenericDataset(Dataset):
@@ -16,6 +17,7 @@ class GenericDataset(Dataset):
         self._detection_range = config['detection_range']
         self._grid_size = config['grid_size']
         self.training = training
+        self.device = config['device']
 
         for info in self._infos:
             difficulty_mask = info['annos']["num_points"] > 0
@@ -90,10 +92,14 @@ class GenericDataset(Dataset):
         if self.training:
             gt_classes = example['annos']['gt_classes']
             gt_boxes = example['annos']['gt_boxes']
-            label, bbox_targets, bbox_outside_weights, dir_cls_targets = self.anchor_assigner.assign(gt_classes, gt_boxes, anchors_mask)
+            label, bbox_targets, bbox_outside_weights, dir_cls_targets = self.anchor_assigner.assign(gt_classes,
+                                                                                                     gt_boxes,
+                                                                                                     anchors_mask)
+
             example['labels'] = label
             example['bbox_targets'] = bbox_targets
-            example['bbox_outside_weights'] = bbox_outside_weights
             example['dir_cls_targets'] = dir_cls_targets
+            example['bbox_outside_weights'] = bbox_outside_weights
 
         return example
+
