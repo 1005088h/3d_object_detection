@@ -249,4 +249,3 @@ def _get_pos_neg_loss(cls_loss, labels):
         cls_pos_loss = cls_loss[..., 1:].sum() / batch_size
         cls_neg_loss = cls_loss[..., 0].sum() / batch_size
     return cls_pos_loss, cls_neg_loss
-

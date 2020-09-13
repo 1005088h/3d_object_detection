@@ -1,8 +1,8 @@
-import box_np_ops
+import framework.box_np_ops as box_np_ops
 import numpy as np
-import box_torch_ops
+import framework.box_torch_ops as box_torch_ops
 import torch
-from nms import nms_gpu
+from framework.nms import nms_gpu
 
 
 class Inference:
@@ -10,11 +10,11 @@ class Inference:
         self.anchors = torch.from_numpy(anchor_assigner.anchors).cuda()
         self._nms_pre_max_size = 1000
         self._nms_post_max_size = 300
-        self._nms_iou_threshold = 0.5
+        self._nms_iou_threshold = 0.2
         self._box_code_size = 7
         self._num_class = 1
         self._use_direction_classifier = True
-        self._nms_score_threshold = 0.05
+        self._nms_score_threshold = 0.5
         self.center_limit = config['center_limit']
         self.detect_class = np.array(config['detect_class'])
 
@@ -133,7 +133,7 @@ def nms(bboxes,
         pre_max_size = min(num_keeped_scores, pre_max_size)
         scores, indices = torch.topk(scores, k=pre_max_size)
         bboxes = bboxes[indices]
-    dets = torch.cat([bboxes, scores.unsqueeze(-1)], dim=1)
+    dets = torch.cat([bboxes, scores.unsqueeze(-1).float()], dim=1)
     dets_np = dets.data.cpu().numpy()
     if len(dets_np) == 0:
         keep = np.array([], dtype=np.int64)

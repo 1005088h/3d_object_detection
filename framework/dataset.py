@@ -1,8 +1,9 @@
 from torch.utils.data import Dataset
+import torch
 import pickle
 import numpy as np
-import box_np_ops
-import torch
+import framework.box_np_ops as box_np_ops
+
 
 
 class GenericDataset(Dataset):
@@ -17,12 +18,32 @@ class GenericDataset(Dataset):
         self._detection_range = config['detection_range']
         self._grid_size = config['grid_size']
         self.training = training
-        self.device = config['device']
 
+        car_total = 0
+        truck_total = 0
+        car_dim = np.zeros(3)
+        truck_dim = np.zeros(3)
         for info in self._infos:
+            if len(info['annos']['name']) > 0:
+                car_mask = info['annos']['name'] == 'car'
+                dims = info['annos']["dimensions"][car_mask]
+                car_dim += np.sum(dims, axis=0)
+                car_total += car_mask.sum()
+                truck_mask = info['annos']['name'] == 'truck'
+                dims = info['annos']["dimensions"][truck_mask]
+                truck_dim += np.sum(dims, axis=0)
+                truck_total += truck_mask.sum()
+                class_mask = car_mask | truck_mask
+                info['annos']['name'][class_mask] = "vehicle"
+
             difficulty_mask = info['annos']["num_points"] > 0
             for key in info['annos']:
                 info['annos'][key] = info['annos'][key][difficulty_mask]
+        all_dim = (car_dim + truck_dim) / (car_total + truck_total)
+        car_dim = car_dim / car_total
+        truck_dim = truck_dim / truck_total
+
+        self.device = config['device']
 
     def __len__(self):
         return len(self._infos)
@@ -45,7 +66,7 @@ class GenericDataset(Dataset):
             'P2': P2,
         }
         # read ground truth if training
-        if info['annos'] is not None:
+        if self.training:
             annos = info['annos']
             # filter class
             gt_class_mask = np.array([n in self._detect_class for n in annos["name"]], dtype=np.bool_)
@@ -75,7 +96,6 @@ class GenericDataset(Dataset):
 
             example['annos'] = {'gt_classes': gt_classes, 'gt_boxes': gt_boxes, 'difficulty': difficulty}
 
-            # if self.training:
             np.random.shuffle(points)
 
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
@@ -102,4 +122,3 @@ class GenericDataset(Dataset):
             example['bbox_outside_weights'] = bbox_outside_weights
 
         return example
-

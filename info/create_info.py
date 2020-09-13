@@ -3,9 +3,17 @@ import pickle
 import numpy as np
 import fire
 import os
-import box_np_ops
 
-input_dir = '/home/xy/ST/dataset/nuscene/mini_val'
+print('__file__={0:<15} | __name__={1:<10} | __package__={2:<10}'.format(__file__,__name__,str(__package__)))
+
+from framework import box_np_ops
+
+
+input_dir = '/home/xy/ST/dataset/inhouse/kitti'
+waymo = False
+waymo_idx = [0, 1, 2, 3, 5, 6, 7]
+
+
 def create_info(data_path=input_dir, save_path=None, train_eval=True):
 
     if save_path is None:
@@ -18,6 +26,10 @@ def create_info(data_path=input_dir, save_path=None, train_eval=True):
     calib_path = os.path.join(data_path, 'calib')
     label_path = os.path.join(data_path, 'label_2')
     
+    if waymo:
+        images_path = os.path.join(data_path, 'image_0')
+        label_path = os.path.join(data_path, 'label_all')
+    
     images = os.listdir(images_path)
     ids = [os.path.splitext(img)[0] for img in images]
     ids.sort()
@@ -29,7 +41,7 @@ def create_info(data_path=input_dir, save_path=None, train_eval=True):
     for id in ids:
         print('image_idx', id)
         image_info = {'image_idx': int(id), 'pointcloud_num_features': 4}
-        image_info['img_path'] = os.path.join(images_path, id + '.png')
+        image_info['img_path'] = os.path.join(images_path, id + '.jpg')
         image_info['img_shape'] = np.array(io.imread(image_info['img_path']).shape[:2], dtype=np.int32)
         image_info['velodyne_path'] = os.path.join(points_path, id + '.bin')
         
@@ -39,10 +51,15 @@ def create_info(data_path=input_dir, save_path=None, train_eval=True):
         image_info['calib/P3'] = None
         image_info['calib/R0_rect'] = None 
         image_info['calib/Tr_velo_to_cam'] = None
+        
         if calib:
             calib_file = os.path.join(calib_path, id + '.txt')
             with open(calib_file, 'r') as f:
                 lines = f.readlines()
+                if waymo:
+                    lines = np.array(lines)
+                    lines = lines[waymo_idx]
+            
             P0 = np.array([float(info) for info in lines[0].split(' ')[1:13]]).reshape([3, 4])
             P1 = np.array([float(info) for info in lines[1].split(' ')[1:13]]).reshape([3, 4])
             P2 = np.array([float(info) for info in lines[2].split(' ')[1:13]]).reshape([3, 4])
@@ -99,7 +116,7 @@ def get_label_anno(label_path, r_rect, velo2cam):
         
     content = [line.strip().split(' ') for line in lines]
     num_objects = len([x[0] for x in content if x[0] != 'DontCare'])
-    annotations['name'] = np.array([x[0] for x in content])
+    annotations['name'] = np.array([x[0] for x in content], dtype = 'U15')
     num_gt = len(annotations['name'])
     annotations['truncated'] = np.array([float(x[1]) for x in content])
     annotations['occluded'] = np.array([int(x[2]) for x in content])
@@ -107,12 +124,16 @@ def get_label_anno(label_path, r_rect, velo2cam):
     annotations['bbox'] = np.array([[float(info) for info in x[4:8]] for x in content]).reshape(-1, 4)
     # dimensions will convert hwl format to standard lwh(lidar) format.
     annotations['dimensions'] = np.array([[float(info) for info in x[8:11]] for x in content]).reshape(-1, 3)[:, [2, 1, 0]]
-    xyz_camera = np.array([[float(info) for info in x[11:14]] for x in content]).reshape(-1, 3)
-    xyz_lidar = box_np_ops.camera_to_lidar(xyz_camera, r_rect, velo2cam)
-    annotations['location'] = xyz_lidar
-    #annotations['rotation_y'] = np.array([float(x[14]) for x in content]).reshape(-1)
+        
+    xyz = np.array([[float(info) for info in x[11:14]] for x in content]).reshape(-1, 3)
+    if not waymo:
+        xyz = box_np_ops.camera_to_lidar(xyz, r_rect, velo2cam)
+    annotations['location'] = xyz
+   
     rotation_y = np.array([1.5 * np.pi - float(x[14]) for x in content]).reshape(-1)
     annotations['rotation_y'] = box_np_ops.limit_period(rotation_y, period=2.0 * np.pi)
+    if waymo:
+        annotations['rotation_y'] = np.array([float(x[14]) for x in content]).reshape(-1)
     #print('rotation_y_2', annotations['rotation_y'])
     if len(content) != 0 and len(content[0]) == 16:  # have score
         annotations['score'] = np.array([float(x[15]) for x in content])
@@ -129,7 +150,7 @@ def add_difficulty_to_annos_v2(info):
     points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, num_features])
     
     annos = info['annos']
-    dims = annos['dimensions']  # lhw format
+    dims = annos['dimensions']  # lwh format
     loc = annos['location'] # xyz in camera
     rots = annos['rotation_y'] # rad in camera
             
@@ -150,7 +171,6 @@ def add_difficulty_to_annos_v2(info):
     annos["difficulty"][easy_mask] = 0
 
 
-      
 def add_difficulty_to_annos(info):
     min_height = [40, 25, 25]  # minimum height for evaluated groundtruth/detections
     max_occlusion = [0, 1, 2]  # maximum occlusion level of the groundtruth used for evaluation
@@ -196,5 +216,7 @@ def _extend_matrix(mat):
         
         
 if __name__ == '__main__':
-   fire.Fire()       
+   
+    create_info()
+    #fire.Fire()       
          

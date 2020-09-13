@@ -1,6 +1,6 @@
 import numpy as np
-import box_np_ops
-import box_torch_ops
+import framework.box_np_ops as box_np_ops
+import framework.box_torch_ops as box_torch_ops
 
 class AnchorAssigner:
     def __init__(self, config):
@@ -24,7 +24,7 @@ class AnchorAssigner:
     def generate(self):
         x_stride, y_stride, z_stride = self._anchor_strides
         x_offset, y_offset, z_offset = self._anchor_offsets + self._anchor_strides / 2
-        z_offset = -1.78
+
         x_centers = np.arange(self._feature_map_size[0], dtype=np.float32)
         y_centers = np.arange(self._feature_map_size[1], dtype=np.float32)
         z_centers = np.arange(self._feature_map_size[2], dtype=np.float32)

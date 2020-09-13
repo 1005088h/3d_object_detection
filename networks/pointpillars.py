@@ -2,6 +2,7 @@
 import torch
 from torch import nn
 from torch.nn import Sequential
+import functools
 
 
 class PointNet(nn.Module):
@@ -117,14 +118,7 @@ class PointPillarsScatter(nn.Module):
 class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
-        '''
-
-        layer_nums = [3, 3, 3]
-        layer_strides = [2, 2, 2]
-        num_filters = [128, 128, 256]
-        upsample_strides = [1, 2, 4]
-        num_upsample_filters = [128, 128, 128]
-        '''
+        norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
         layer_nums = [3, 5, 5]
         layer_strides = [2, 2, 2]
         num_filters = [64, 128, 256]
@@ -133,58 +127,51 @@ class RPN(nn.Module):
         num_input_filters = num_rpn_input_filters
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
-        '''
-        model = []
-        for i in range(2):
-            model += [nn.Conv2d(num_input_filters, num_input_filters, 3, padding=1),
-                      nn.BatchNorm2d(num_input_filters),
-                      nn.ReLU()]
-        self.block0 = Sequential(*model)
-        '''
+
         model = [nn.ZeroPad2d(1),
                  nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2),
-                 nn.BatchNorm2d(num_filters[0]),
+                 norm_layer(num_filters[0]),
                  nn.ReLU()]
         for i in range(layer_nums[0]):
             model += [nn.Conv2d(num_filters[0], num_filters[0], 3, padding=1),
-                      nn.BatchNorm2d(num_filters[0]),
+                      norm_layer(num_filters[0]),
                       nn.ReLU()]
         self.block1 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
-                 nn.BatchNorm2d(num_upsample_filters[0]),
+                 norm_layer(num_upsample_filters[0]),
                  nn.ReLU()]
         self.deconv1 = Sequential(*model)
 
         model = [nn.ZeroPad2d(1),
                  nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1]),
-                 nn.BatchNorm2d(num_filters[1]),
+                 norm_layer(num_filters[1]),
                  nn.ReLU()]
         for i in range(layer_nums[1]):
             model += [nn.Conv2d(num_filters[1], num_filters[1], 3, padding=1),
-                      nn.BatchNorm2d(num_filters[1]),
+                      norm_layer(num_filters[1]),
                       nn.ReLU()]
             self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
                                stride=upsample_strides[1]),
-                 nn.BatchNorm2d(num_upsample_filters[1]),
+                 norm_layer(num_upsample_filters[1]),
                  nn.ReLU()]
         self.deconv2 = Sequential(*model)
 
         model = [nn.ZeroPad2d(1),
                  nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2]),
-                 nn.BatchNorm2d(num_filters[2]),
+                 norm_layer(num_filters[2]),
                  nn.ReLU()]
         for i in range(layer_nums[2]):
             model += [nn.Conv2d(num_filters[2], num_filters[2], 3, padding=1),
-                      nn.BatchNorm2d(num_filters[2]),
+                      norm_layer(num_filters[2]),
                       nn.ReLU()]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
                                stride=upsample_strides[2]),
-                 nn.BatchNorm2d(num_upsample_filters[2]),
+                 norm_layer(num_upsample_filters[2]),
                  nn.ReLU()]
         self.deconv3 = Sequential(*model)
 
@@ -240,7 +227,7 @@ class PointPillars(nn.Module):
         self.loss_generator = loss_generator
 
     def forward(self, example):
-        voxels = torch.from_numpy(example["voxels"]).to(self.device)
+        voxels = torch.from_numpy(example["voxels"]).to(self.device)#.half()
         num_points_per_voxel = torch.from_numpy(example["num_points_per_voxel"]).to(self.device)
         coordinates = torch.from_numpy(example["coordinates"]).to(self.device)
 
@@ -249,5 +236,4 @@ class PointPillars(nn.Module):
         preds_dict = self.rpn(spatial_features)
 
         return preds_dict
-
 
