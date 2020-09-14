@@ -19,7 +19,7 @@ conda install scikit-image scipy numba pillow matplotlib
 pip install opencv-python
 ```
 
-### 3. Setup cuda for numba (will be removed in 1.6.0 release)
+### 3. Setup cuda for numba
 
 you need to add following environment variable for numba.cuda, you can add them to ~/.bashrc:
 
