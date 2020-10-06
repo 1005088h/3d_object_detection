@@ -54,7 +54,7 @@ class AnchorAssigner:
         dense_voxel_map = dense_voxel_map.cumsum(1)
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
         anchors_mask = anchors_area > 0
-        anchors_mask = anchors_mask.astype(np.uint8)
+        #anchors_mask = anchors_mask.astype(np.uint8)
         return anchors_mask
 
     def assign(self, gt_classes, gt_boxes, anchors_mask):

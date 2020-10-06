@@ -3,37 +3,56 @@ import torch
 import pickle
 import numpy as np
 import framework.box_np_ops as box_np_ops
-
-
+import time
+from pathlib import Path
+import matplotlib.pyplot as plt
 
 class GenericDataset(Dataset):
-    def __init__(self, config, train_info_path, voxel_generator, anchor_assigner, training=True):
-        with open(train_info_path, 'rb') as f:
+    def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True):
+        with open(info_path, 'rb') as f:
             self._infos = pickle.load(f)
-
+        self.root_dir = Path(info_path).parent
         self._num_point_features = config['num_point_features']
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
         self._detect_class = config['detect_class']
         self._detection_range = config['detection_range']
-        self._grid_size = config['grid_size']
+        self.grid_size = config['grid_size']
         self.training = training
+        self.voxelization_t = 0.0
+        self.load_t = 0.0
 
         car_total = 0
         truck_total = 0
+        bus_total = 0
         car_dim = np.zeros(3)
         truck_dim = np.zeros(3)
+        bus_dim = np.zeros(3)
+        dignals = np.array([])
         for info in self._infos:
             if len(info['annos']['name']) > 0:
                 car_mask = info['annos']['name'] == 'car'
                 dims = info['annos']["dimensions"][car_mask]
                 car_dim += np.sum(dims, axis=0)
                 car_total += car_mask.sum()
+
                 truck_mask = info['annos']['name'] == 'truck'
                 dims = info['annos']["dimensions"][truck_mask]
                 truck_dim += np.sum(dims, axis=0)
                 truck_total += truck_mask.sum()
-                class_mask = car_mask | truck_mask
+                dignal = np.sqrt(np.square(dims[:, 0]) + np.square(dims[:, 1]))
+                dignals = np.append(dignals, dignal)
+                mean_dignals = dignals.mean()
+
+                bus_mask = info['annos']['name'] == 'bus'
+                dims = info['annos']["dimensions"][bus_mask]
+                bus_dim += np.sum(dims, axis=0)
+                bus_total += bus_mask.sum()
+
+                class_mask = car_mask | truck_mask #| bus_mask
+
+                dims = info['annos']["dimensions"][class_mask]
+
                 info['annos']['name'][class_mask] = "vehicle"
 
             difficulty_mask = info['annos']["num_points"] > 0
@@ -42,7 +61,10 @@ class GenericDataset(Dataset):
         all_dim = (car_dim + truck_dim) / (car_total + truck_total)
         car_dim = car_dim / car_total
         truck_dim = truck_dim / truck_total
-
+        dignals = np.floor(dignals).astype('int32')
+        drange = np.zeros([20])
+        for d in dignals:
+            drange[d] += 1
         self.device = config['device']
 
     def __len__(self):
@@ -51,8 +73,10 @@ class GenericDataset(Dataset):
     def __getitem__(self, idx):
         info = self._infos[idx]
         # read input
-        points = np.fromfile(str(info['velodyne_path']), dtype=np.float32, count=-1).reshape(
-            [-1, self._num_point_features])
+        t = time.time()
+        v_path = self.root_dir / info['velodyne_path']
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self._num_point_features])
+        self.load_t += (time.time() - t)
 
         # read calib
         rect = info['calib/R0_rect'].astype(np.float32)
@@ -98,16 +122,24 @@ class GenericDataset(Dataset):
 
             np.random.shuffle(points)
 
+        t = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
-        grid_size = self._grid_size
+        '''
+        count = 0
+        for num in num_points_per_voxel:
+            if num < 30:
+                count += 1
+        print(count / len(num_points_per_voxel))
+        '''
+        grid_size = self.grid_size
         voxel_size = self.voxel_generator.voxel_size
         offset = self.voxel_generator.offset
         anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset)
-
         example['voxels'] = voxels
         example['coordinates'] = coors
         example['num_points_per_voxel'] = num_points_per_voxel
         example['anchors_mask'] = anchors_mask
+        self.voxelization_t += (time.time() - t)
 
         if self.training:
             gt_classes = example['annos']['gt_classes']

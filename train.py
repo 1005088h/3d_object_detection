@@ -12,6 +12,26 @@ from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn
 from networks.pointpillars import PointPillars
+from framework.eval import get_eval_result
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def example_convert_to_torch(example):
+    device = torch.device("cuda:0")
+    example_torch = {}
+    for k, v in example.items():
+        if k in ["voxels"]:
+            example_torch[k] = torch.as_tensor(v, dtype=torch.float32, device=device).half()
+        elif k in ["coordinates", "num_points_per_voxel"]:
+            example_torch[k] = torch.as_tensor(
+                v, dtype=torch.int32, device=device)
+        elif k in ["anchors_mask"]:
+            example_torch[k] = torch.as_tensor(
+                v, dtype=torch.bool, device=device)
+        else:
+            example_torch[k] = v
+    return example_torch
 
 
 def train(config_path=None):
@@ -137,7 +157,7 @@ def train(config_path=None):
 
 
 def infer():
-    with open('config.json', 'r') as f:
+    with open('configs/inhouse.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
@@ -162,55 +182,69 @@ def infer():
     net.half()
     net.eval()
     dt_annos = []
-
-    data_t = 0.0
+    toGPU_t = 0.0
     network_t = 0.0
     post_t = 0.0
     data_iter = iter(eval_dataloader)
-
     for step in range(9999999):
         print('step', step)
         try:
-            t = time.time()
             example = next(data_iter)
-            data_t += time.time() - t
+            t = time.time()
+            example = example_convert_to_torch(example)
+            torch.cuda.synchronize()
+            d_t = time.time() - t
+            toGPU_t += d_t
+            #print(d_t)
 
             t = time.time()
             preds_dict = net(example)
-            network_t += time.time() - t
+            torch.cuda.synchronize()
+            d_t = time.time() - t
+            network_t += d_t
+            #print(d_t)
 
             t = time.time()
             dt_annos += inference.infer(example, preds_dict)
-            post_t += time.time() - t
+            torch.cuda.synchronize()
+            d_t = time.time() - t
+            post_t += d_t
+            #print(d_t)
+            #print(eval_dataset.load_t)
         except StopIteration:
             break
-    '''
-    for step, example in enumerate(eval_dataloader):
-        if step == 1:
-            t = time.time()
-        print("step", step)
-        preds_dict = net(example)
-        dt_annos += inference.infer(example, preds_dict)
-    '''
 
-    data_t = data_t / len(eval_dataset)
+    load_t = eval_dataset.load_t / len(eval_dataset)
+    voxelization_t = eval_dataset.voxelization_t / len(eval_dataset)
+    toGPU_t = toGPU_t / len(eval_dataset)
     network_t = network_t / len(eval_dataset)
     post_t = post_t / len(eval_dataset)
 
-    print("avg_time : %.5f" % (data_t + network_t + post_t))
-    print("data_t : %.5f" % data_t)
+    print("avg_time : %.5f" % (voxelization_t + toGPU_t + network_t + post_t))
+    print("load_t : %.5f" % load_t)
+    print("voxelization_t : %.5f" % voxelization_t)
+    print("toGPU_t : %.5f" % toGPU_t)
     print("network_t : %.5f" % network_t)
     print("post_t : %.5f" % post_t)
 
     with open(config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
-    '''   
+
     gt_annos = [
         info["annos"] for info in eval_dataset._infos
     ]
-    '''
-
+    AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
+    plt.axis([0, 1, 0, 1])
+    recalls = np.linspace(0.0, 1.0, num=41)
+    plt.plot(recalls, precisions, label="AP: %.4f" % AP)
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('vehicle BEV AP@0.7')
+    plt.legend()
+    plt.show()
 
 if __name__ == "__main__":
-    train()
-    #infer()
+    # train()
+    infer()
+
+

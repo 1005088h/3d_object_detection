@@ -3,6 +3,7 @@ import numpy as np
 import framework.box_torch_ops as box_torch_ops
 import torch
 from framework.nms import nms_gpu
+import time
 
 
 class Inference:
@@ -14,51 +15,63 @@ class Inference:
         self._box_code_size = 7
         self._num_class = 1
         self._use_direction_classifier = True
-        self._nms_score_threshold = 0.5
+        self._nms_score_threshold = 0.05
         self.center_limit = config['center_limit']
         self.detect_class = np.array(config['detect_class'])
 
     def infer(self, example, preds_dict):
+        annos = []
         batch_box_preds = preds_dict["box_preds"]
         batch_cls_preds = preds_dict["cls_preds"]
         batch_size = batch_box_preds.shape[0]
+
         batch_box_preds = batch_box_preds.view(batch_size, -1, self._box_code_size)
         batch_cls_preds = batch_cls_preds.view(batch_size, -1, self._num_class)
 
         batch_anchors = torch.stack([self.anchors] * batch_size)
         batch_box_preds = box_torch_ops.box_decode(batch_box_preds, batch_anchors)
-        batch_anchors_mask = torch.from_numpy(example["anchors_mask"]).cuda().bool()
+
+        batch_anchors_mask = example["anchors_mask"]
 
         if self._use_direction_classifier:
             batch_dir_preds = preds_dict["dir_cls_preds"]
             batch_dir_preds = batch_dir_preds.view(batch_size, -1, 2)
 
         image_idx = example["image_idx"]
-        annos = []
+
         for box_preds, cls_preds, dir_preds, a_mask, img_id in zip(
                 batch_box_preds, batch_cls_preds, batch_dir_preds, batch_anchors_mask, image_idx
         ):
+
             box_preds = box_preds[a_mask]
             cls_preds = cls_preds[a_mask]
+
             if self._use_direction_classifier:
                 if a_mask is not None:
                     dir_preds = dir_preds[a_mask]
                 dir_labels = torch.max(dir_preds, dim=-1)[1]
+
             cls_scores = torch.sigmoid(cls_preds)
             top_scores, top_labels = torch.max(cls_scores, dim=-1)
+
             thresh = torch.tensor([self._nms_score_threshold], device=top_scores.device).type_as(top_scores)
-            top_scores_keep = top_scores >= thresh
+
             selected = None
+
+            top_scores_keep = top_scores >= thresh
+
             if top_scores_keep.any():
                 top_scores = top_scores[top_scores_keep]
                 box_preds = box_preds[top_scores_keep]
                 if self._use_direction_classifier:
                     dir_labels = dir_labels[top_scores_keep]
                 top_labels = top_labels[top_scores_keep]
+
                 boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
                 box_preds_corners = box_torch_ops.center_to_corner_box2d(
                     boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
                 boxes_for_nms = box_torch_ops.corner_to_standup_nd(box_preds_corners)
+
                 selected = nms(
                     boxes_for_nms,
                     top_scores,
@@ -68,6 +81,7 @@ class Inference:
                 )
 
             anno = get_start_result_anno()
+
             if selected is not None:
                 box_preds = box_preds[selected]
                 labels_preds = top_labels[selected]
@@ -97,29 +111,31 @@ class Inference:
                 scores_preds = scores_preds[range_mask]
 
                 dt_num = box_preds.shape[0]
-                anno["name"] = self.detect_class[label_preds]
-                anno["location"] = box_preds[:, :3]
-                anno["dimensions"] = box_preds[:, 3:6]
-                anno["rotation_y"] = box_preds[:, 6]
-                anno["score"] = scores_preds
+                if dt_num > 0:
+                    anno["name"] = self.detect_class[label_preds]
+                    anno["location"] = box_preds[:, :3]
+                    anno["dimensions"] = box_preds[:, 3:6]
+                    anno["rotation_y"] = box_preds[:, 6]
+                    anno["score"] = scores_preds
                 anno["image_idx"] = np.array([img_id] * dt_num)
-
             annos.append(anno)
+
         return annos
 
 
 def get_start_result_anno():
-    annotations = {
-        'name': [],
-        'truncated': [],
-        'occluded': [],
-        'alpha': [],
-        'bbox': [],
-        'dimensions': [],
-        'location': [],
-        'rotation_y': [],
-        'score': [],
-    }
+    annotations = {}
+    annotations.update({
+        'name': np.array([]),
+        'truncated': np.array([]),
+        'occluded': np.array([]),
+        'alpha': np.array([]),
+        'bbox': np.zeros([0, 4]),
+        'dimensions': np.zeros([0, 3]),
+        'location': np.zeros([0, 3]),
+        'rotation_y': np.array([]),
+        'score': np.array([]),
+    })
     return annotations
 
 

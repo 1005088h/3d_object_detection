@@ -65,7 +65,6 @@ def nms_postprocess(keep_out, mask_host, boxes_num):
     return num_to_keep
 
 
-
 @cuda.jit('(float32[:], float32[:])', device=True, inline=True)
 def iou_device(a, b):
     left = max(a[0], b[0])

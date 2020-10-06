@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn import Sequential
 import functools
-
+import time
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -63,7 +63,6 @@ class PointNet(nn.Module):
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
-        #x = self.pfn_layers2(x)
         x_max = torch.max(x, dim=1, keepdim=True)[0]
 
         return x_max.squeeze()
@@ -113,7 +112,6 @@ class PointPillarsScatter(nn.Module):
         batch_canvas = batch_canvas.view(self.batch_size, self.num_channels, self.nx, self.ny)
 
         return batch_canvas
-
 
 class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
@@ -185,7 +183,6 @@ class RPN(nn.Module):
             self.conv_dir_cls = nn.Conv2d(sum(num_upsample_filters), num_anchor_per_loc * 2, 1)
 
     def forward(self, x):
-        # x = self.block0(x)
         x = self.block1(x)
         up1 = self.deconv1(x)
         x = self.block2(x)
@@ -193,20 +190,17 @@ class RPN(nn.Module):
         x = self.block3(x)
         up3 = self.deconv3(x)
         x = torch.cat([up1, up2, up3], dim=1)
-        box_preds = self.conv_box(x)
-        cls_preds = self.conv_cls(x)
 
-        box_preds = box_preds.permute(0, 2, 3, 1).contiguous()
-        cls_preds = cls_preds.permute(0, 2, 3, 1).contiguous()
-
+        box_preds = self.conv_box(x).permute(0, 2, 3, 1).contiguous()
+        cls_preds = self.conv_cls(x).permute(0, 2, 3, 1).contiguous()
+        
         pred_dict = {
             "box_preds": box_preds,
             "cls_preds": cls_preds,
         }
-
+        
         if self._use_direction_classifier:
-            dir_cls_preds = self.conv_dir_cls(x)
-            dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).contiguous()
+            dir_cls_preds = self.conv_dir_cls(x).permute(0, 2, 3, 1).contiguous()
             pred_dict["dir_cls_preds"] = dir_cls_preds
 
         return pred_dict
@@ -214,7 +208,7 @@ class RPN(nn.Module):
 
 class PointPillars(nn.Module):
 
-    def __init__(self, config, loss_generator=None):
+    def __init__(self, config, inference=None):
         super().__init__()
         self.device = config['device']
         self.pillar_point_net = PointNet(config['num_point_features'], config['voxel_size'], config['detection_offset'])
@@ -224,16 +218,17 @@ class PointPillars(nn.Module):
                                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.loss_generator = loss_generator
+        self.inference = inference
 
     def forward(self, example):
-        voxels = torch.from_numpy(example["voxels"]).to(self.device)#.half()
-        num_points_per_voxel = torch.from_numpy(example["num_points_per_voxel"]).to(self.device)
-        coordinates = torch.from_numpy(example["coordinates"]).to(self.device)
+        with torch.no_grad():
+            voxels = example["voxels"]
+            num_points_per_voxel = example["num_points_per_voxel"]
+            coordinates = example["coordinates"]
 
-        voxel_features = self.pillar_point_net(voxels, num_points_per_voxel, coordinates)
-        spatial_features = self.middle_feature_extractor(voxel_features, coordinates)
-        preds_dict = self.rpn(spatial_features)
+            voxel_features = self.pillar_point_net(voxels, num_points_per_voxel, coordinates)
+            spatial_features = self.middle_feature_extractor(voxel_features, coordinates)
+            preds_dict = self.rpn(spatial_features)
 
         return preds_dict
 

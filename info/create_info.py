@@ -8,8 +8,8 @@ print('__file__={0:<15} | __name__={1:<10} | __package__={2:<10}'.format(__file_
 
 from framework import box_np_ops
 
-
-input_dir = '/home/xy/ST/dataset/inhouse/kitti'
+input_dir = '/home/xy/ST/dataset/inhouse/kitti/eval'
+#input_dir = '/home/xy/ST/dataset/inhouse/kitti/train'
 waymo = False
 waymo_idx = [0, 1, 2, 3, 5, 6, 7]
 
@@ -20,11 +20,16 @@ def create_info(data_path=input_dir, save_path=None, train_eval=True):
         save_path = data_path
         
     filename = os.path.join(save_path, 'data_info.pkl')
-    
+    '''
     images_path = os.path.join(data_path, 'image_2')
     points_path = os.path.join(data_path, 'velodyne')
     calib_path = os.path.join(data_path, 'calib')
     label_path = os.path.join(data_path, 'label_2')
+    '''
+    images_path = 'image_2'
+    points_path = 'velodyne'
+    calib_path = 'calib'
+    label_path = 'label_2'
     
     if waymo:
         images_path = os.path.join(data_path, 'image_0')
