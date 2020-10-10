@@ -20,5 +20,6 @@
   "detect_class": ["vehicle"],
   "matched_threshold": 0.6,
   "unmatched_threshold": 0.45,
-  "box_code_size": 7
+  "box_code_size": 7,
+  "eval_step": 100,
 }

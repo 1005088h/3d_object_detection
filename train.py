@@ -17,12 +17,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def example_convert_to_torch(example):
+def example_convert_to_torch(example, dtype=torch.float32):
     device = torch.device("cuda:0")
     example_torch = {}
     for k, v in example.items():
         if k in ["voxels"]:
-            example_torch[k] = torch.as_tensor(v, dtype=torch.float32, device=device).half()
+            example_torch[k] = torch.as_tensor(v, dtype=dtype, device=device)
         elif k in ["coordinates", "num_points_per_voxel"]:
             example_torch[k] = torch.as_tensor(
                 v, dtype=torch.int32, device=device)
@@ -44,6 +44,7 @@ def train(config_path=None):
     anchor_assigner = AnchorAssigner(config)
     loss_generator = LossGenerator(config)
     metrics = Metric()
+    inference = Inference(config, anchor_assigner)
 
     train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True)
     train_dataloader = torch.utils.data.DataLoader(
@@ -65,34 +66,38 @@ def train(config_path=None):
         pin_memory=False,
         drop_last=True,
         collate_fn=merge_second_batch)
+    gt_annos = [info["annos"] for info in eval_dataset.infos]
 
     net = PointPillars(config)
     net.to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
-    old_step = 1
-    lowest_loss = 9999999
+    step_num = 0
 
     model_path = config['model_path']
-    if os.path.exists(model_path):
-        checkpoint = torch.load(model_path)
+    experiment = config['experiment']
+    model_path = os.path.join(model_path, experiment)
+    latest_model_path = os.path.join(model_path, 'latest.pth')
+    log_file = os.path.join(model_path, 'log.txt')
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
+    elif os.path.exists(latest_model_path):
+        checkpoint = torch.load(latest_model_path)
         net.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        old_step = checkpoint['step'] + 1
-        lowest_loss = checkpoint['loss']
+        step_num = checkpoint['step']
         print('model loaded')
 
-    # optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
     print("num_trainable parameters:", len(list(net.parameters())))
 
     net.train()
     display_step = 50
-    save_step = 500
+    save_step = 5000
+    eval_step = 5000
     avg_loss = 0
-    avg_time = 0
 
     data_iter = iter(train_dataloader)
-
-    for step in range(old_step, 10000000):
+    avg_time = time.time()
+    for step in range(step_num + 1, 10000000):
         epoch = (step * config['batch_size']) // len(train_dataset) + 1
         try:
             example = next(data_iter)
@@ -102,9 +107,8 @@ def train(config_path=None):
             example = next(data_iter)
 
         optimizer.zero_grad()
-        t = time.time()
+        example = example_convert_to_torch(example)
         preds_dict = net(example)
-        avg_time += time.time() - t
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
         loss.backward()
@@ -116,27 +120,27 @@ def train(config_path=None):
 
         metrics.update(labels, cls_preds)
         avg_loss += loss.detach().item()
-        if step % save_step == 0 or avg_loss < lowest_loss:
+        if step % save_step == 0:
             torch.save({'step': step,
                         'model_state_dict': net.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': lowest_loss},
-                       model_path)
+                        'optimizer_state_dict': optimizer.state_dict()},
+                        latest_model_path)
+            step_model_path = os.path.join(model_path, str(step) + '.pth')
+            torch.save({'step': step,
+                        'model_state_dict': net.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict()},
+                        step_model_path)
             print("Model saved")
-            if avg_loss < lowest_loss:
-                lowest_loss = avg_loss
 
         if step % display_step == 0:
-            print('epch %d, step %d' % (epoch, step))
             avg_loss = avg_loss / display_step
-            avg_time = avg_time / display_step
-            print('avg_loss', avg_loss)
-            print('avg_time', avg_time)
-            avg_loss = 0
-            avg_time = 0
+            avg_time = (time.time() - avg_time) / display_step
+            print('### Epoch %d, Step %d, Loss: %f, Time: %f' % (epoch, step, avg_loss, avg_time))
             print(metrics)
             metrics.clear()
-        '''
+            avg_loss = 0
+            avg_time = time.time()
+
         if step % eval_step == 0:
             net.eval()
             print("#################################")
@@ -144,16 +148,22 @@ def train(config_path=None):
             print("#################################")
             dt_annos = []
 
+            t = time.time()
+            count = 1
+            eval_total = len(eval_dataloaders)
             for example in iter(eval_dataloader):
+                print('%d/%d' % (count, eval_total), end='\r')
+                example = example_convert_to_torch(example)
                 preds_dict = net(example)
-                dt_annos += inference.inter(example, preds_dict)
-            
-            gt_annos = [info["annos"] for info in eval_dataset._infos]
-
-            result = get_official_eval_result(gt_annos, dt_annos, class_names, return_data=True)
-            print(result)
+                dt_annos += inference.infer(example, preds_dict)
+            t = (time.time() - t) / len(eval_dataloader)
+            time_str = 'Time for each frame: %f' % t
+            AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
+            log_str = 'Step: %d, AP: %f\n' % (step, AP)
+            print(log_str, time_str)
+            with open(log_file, 'a+') as f:
+                f.write(log_str)
             net.train()
-            '''
 
 
 def infer():
@@ -191,26 +201,26 @@ def infer():
         try:
             example = next(data_iter)
             t = time.time()
-            example = example_convert_to_torch(example)
+            example = example_convert_to_torch(example, dtype=torch.float16)
             torch.cuda.synchronize()
             d_t = time.time() - t
             toGPU_t += d_t
-            #print(d_t)
+            # print(d_t)
 
             t = time.time()
             preds_dict = net(example)
             torch.cuda.synchronize()
             d_t = time.time() - t
             network_t += d_t
-            #print(d_t)
+            # print(d_t)
 
             t = time.time()
             dt_annos += inference.infer(example, preds_dict)
             torch.cuda.synchronize()
             d_t = time.time() - t
             post_t += d_t
-            #print(d_t)
-            #print(eval_dataset.load_t)
+            # print(d_t)
+            # print(eval_dataset.load_t)
         except StopIteration:
             break
 
@@ -231,7 +241,7 @@ def infer():
         pickle.dump(dt_annos, f)
 
     gt_annos = [
-        info["annos"] for info in eval_dataset._infos
+        info["annos"] for info in eval_dataset.infos
     ]
     AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
     plt.axis([0, 1, 0, 1])
@@ -243,8 +253,7 @@ def infer():
     plt.legend()
     plt.show()
 
+
 if __name__ == "__main__":
-    # train()
-    infer()
-
-
+    train()
+    # infer()

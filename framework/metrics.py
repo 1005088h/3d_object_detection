@@ -4,7 +4,7 @@ import numpy as np
 
 class Metric:
     def __init__(self):
-        self._thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+        self._thresholds = [0.1, 0.3, 0.5, 0.7]
         num = len(self._thresholds)
         self.rec_count = torch.zeros(num)
         self.rec_total = torch.zeros(num)

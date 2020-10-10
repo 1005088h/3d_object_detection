@@ -173,7 +173,7 @@ class RPN(nn.Module):
                  nn.ReLU()]
         self.deconv3 = Sequential(*model)
 
-        num_anchor_per_loc = 2
+        num_anchor_per_loc = 2 * 3
         num_class = 1
         num_cls = num_anchor_per_loc * num_class
         box_code_size = 7
@@ -221,14 +221,10 @@ class PointPillars(nn.Module):
         self.inference = inference
 
     def forward(self, example):
-        with torch.no_grad():
-            voxels = example["voxels"]
-            num_points_per_voxel = example["num_points_per_voxel"]
-            coordinates = example["coordinates"]
 
-            voxel_features = self.pillar_point_net(voxels, num_points_per_voxel, coordinates)
-            spatial_features = self.middle_feature_extractor(voxel_features, coordinates)
-            preds_dict = self.rpn(spatial_features)
+        voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"], example["coordinates"])
+        spatial_features = self.middle_feature_extractor(voxel_features, example["coordinates"])
+        preds_dict = self.rpn(spatial_features)
 
         return preds_dict
 

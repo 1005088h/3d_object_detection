@@ -4,7 +4,7 @@ import framework.box_torch_ops as box_torch_ops
 
 class AnchorAssigner:
     def __init__(self, config):
-        self._sizes = config['anchor_sizes']
+        self.sizes = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
         self._feature_map_size = np.array(config['feature_map_size'], dtype=np.float32)
         self._anchor_strides = config['detection_range_diff'] / self._feature_map_size
         self._anchor_offsets = config['detection_offset']
@@ -33,15 +33,17 @@ class AnchorAssigner:
         y_centers = y_centers * y_stride + y_offset
         z_centers = z_centers * z_stride + z_offset
 
-        sizes = np.reshape(np.array(self._sizes, dtype=np.float32), [-1, 3])
         rotations = np.array(self._rotations, dtype=np.float32)
+        sizes = np.reshape(np.array(self.sizes, dtype=np.float32), [-1, 3])
         rets = np.meshgrid(x_centers, y_centers, z_centers, rotations, indexing='ij')
         tile_shape = [1] * 5
         tile_shape[-2] = int(sizes.shape[0])
         for i in range(len(rets)):
+            rets[i] = np.tile(rets[i][..., np.newaxis, :], tile_shape)
             rets[i] = rets[i][..., np.newaxis]
         tile_size_shape = list(rets[0].shape)
-        tile_size_shape[4] = 1
+        tile_size_shape[3] = 1
+        sizes = np.reshape(sizes, [1, 1, 1, -1, 1, 3])
         sizes = np.tile(sizes, tile_size_shape)
         rets.insert(3, sizes)
         ret = np.concatenate(rets, axis=-1)

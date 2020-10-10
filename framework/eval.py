@@ -27,7 +27,6 @@ def bev_box_overlap(boxes, qboxes, criterion=-1):
     riou = rotate_iou_gpu_eval(boxes, qboxes, criterion)
     return riou
 
-
 def get_split_parts(num, num_part):
     same_part = num // num_part
     remain_num = num % num_part
@@ -129,7 +128,7 @@ def compute_statistics_jit(overlaps, ignored_gt, ignored_det, dt_scores, min_ove
         for i in range(det_size):
             if (dt_scores[i] < thresh):
                 ignored_threshold[i] = True
-    print(overlaps.shape, det_size, gt_size)
+
     NO_DETECTION = -10000000
     tp, fp, fn, similarity = 0, 0, 0, 0
     thresholds = np.zeros((gt_size,))
@@ -213,7 +212,7 @@ def fused_compute_statistics(overlaps,
 def eval_AP(gt_annos, dt_annos, current_classes, min_overlaps):
     
     assert len(gt_annos) == len(dt_annos)
-    #dt and gt transposed
+
     rets = calculate_iou_partly(dt_annos, gt_annos)# dt vs gt overlap
     overlaps, parted_overlaps, total_dt_num, total_gt_num, split_parts = rets
     N_SAMPLE_PTS = 41

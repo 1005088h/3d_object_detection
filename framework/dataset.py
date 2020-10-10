@@ -10,13 +10,13 @@ import matplotlib.pyplot as plt
 class GenericDataset(Dataset):
     def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True):
         with open(info_path, 'rb') as f:
-            self._infos = pickle.load(f)
+            self.infos = pickle.load(f)
         self.root_dir = Path(info_path).parent
-        self._num_point_features = config['num_point_features']
+        self.num_point_features = config['num_point_features']
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
-        self._detect_class = config['detect_class']
-        self._detection_range = config['detection_range']
+        self.detect_class = config['detect_class']
+        self.detection_range = config['detection_range']
         self.grid_size = config['grid_size']
         self.training = training
         self.voxelization_t = 0.0
@@ -28,8 +28,7 @@ class GenericDataset(Dataset):
         car_dim = np.zeros(3)
         truck_dim = np.zeros(3)
         bus_dim = np.zeros(3)
-        dignals = np.array([])
-        for info in self._infos:
+        for info in self.infos:
             if len(info['annos']['name']) > 0:
                 car_mask = info['annos']['name'] == 'car'
                 dims = info['annos']["dimensions"][car_mask]
@@ -40,42 +39,33 @@ class GenericDataset(Dataset):
                 dims = info['annos']["dimensions"][truck_mask]
                 truck_dim += np.sum(dims, axis=0)
                 truck_total += truck_mask.sum()
-                dignal = np.sqrt(np.square(dims[:, 0]) + np.square(dims[:, 1]))
-                dignals = np.append(dignals, dignal)
-                mean_dignals = dignals.mean()
 
                 bus_mask = info['annos']['name'] == 'bus'
                 dims = info['annos']["dimensions"][bus_mask]
                 bus_dim += np.sum(dims, axis=0)
                 bus_total += bus_mask.sum()
 
-                class_mask = car_mask | truck_mask #| bus_mask
-
-                dims = info['annos']["dimensions"][class_mask]
-
+                class_mask = car_mask | truck_mask | bus_mask
                 info['annos']['name'][class_mask] = "vehicle"
 
             difficulty_mask = info['annos']["num_points"] > 0
             for key in info['annos']:
                 info['annos'][key] = info['annos'][key][difficulty_mask]
-        all_dim = (car_dim + truck_dim) / (car_total + truck_total)
+
+        bus_dim = bus_dim / bus_total
         car_dim = car_dim / car_total
         truck_dim = truck_dim / truck_total
-        dignals = np.floor(dignals).astype('int32')
-        drange = np.zeros([20])
-        for d in dignals:
-            drange[d] += 1
         self.device = config['device']
 
     def __len__(self):
-        return len(self._infos)
+        return len(self.infos)
 
     def __getitem__(self, idx):
-        info = self._infos[idx]
+        info = self.infos[idx]
         # read input
         t = time.time()
         v_path = self.root_dir / info['velodyne_path']
-        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self._num_point_features])
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self.num_point_features])
         self.load_t += (time.time() - t)
 
         # read calib
@@ -93,9 +83,9 @@ class GenericDataset(Dataset):
         if self.training:
             annos = info['annos']
             # filter class
-            gt_class_mask = np.array([n in self._detect_class for n in annos["name"]], dtype=np.bool_)
+            gt_class_mask = np.array([n in self.detect_class for n in annos["name"]], dtype=np.bool_)
             gt_names = annos["name"][gt_class_mask]
-            gt_classes = np.array([self._detect_class.index(n) + 1 for n in gt_names], dtype=np.int32)
+            gt_classes = np.array([self.detect_class.index(n) + 1 for n in gt_names], dtype=np.int32)
             loc = annos["location"][gt_class_mask]
             dims = annos["dimensions"][gt_class_mask]
             rots = annos["rotation_y"][gt_class_mask]
@@ -111,7 +101,7 @@ class GenericDataset(Dataset):
             '''
 
             # filter range
-            bv_range = self._detection_range[[0, 1, 3, 4]]
+            bv_range = self.detection_range[[0, 1, 3, 4]]
             range_mask = box_np_ops.filter_gt_box_outside_range(gt_boxes, bv_range)
             gt_boxes = gt_boxes[range_mask]
             gt_classes = gt_classes[range_mask]
