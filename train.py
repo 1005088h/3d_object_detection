@@ -150,9 +150,9 @@ def train(config_path=None):
 
             t = time.time()
             count = 1
-            eval_total = len(eval_dataloaders)
+            eval_total = len(eval_dataloader)
             for example in iter(eval_dataloader):
-                print('%d/%d' % (count, eval_total), end='\r')
+                print('%d / %d' % (count, eval_total))
                 example = example_convert_to_torch(example)
                 preds_dict = net(example)
                 dt_annos += inference.infer(example, preds_dict)

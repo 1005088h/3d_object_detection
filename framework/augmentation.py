@@ -33,17 +33,19 @@ def global_scaling(gt_boxes, points, min_scale=0.95, max_scale=1.05):
     gt_boxes[:, :6] *= noise_scale
     return gt_boxes, points
 
-def global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05):
-    x_scale = np.random.uniform(min_scale, max_scale)
-    y_scale = np.random.uniform(min_scale, max_scale)
-    z_scale = np.random.uniform(min_scale, max_scale)
+def global_scaling_v2(gt_boxes, points, min_scale=0.85, max_scale=1.15):
+    x_scale = np.random.uniform(0.9, 1.1)
+    y_scale = np.random.uniform(0.9, 1.1)
+    z_scale = np.random.uniform(0.95, 1.05)
     scales = np.array([x_scale, y_scale, z_scale])
     points[:, :3] *= scales
     gt_boxes[:, :3] *= scales
-    gt_boxes[:, 3:6] *= scales
-    r = np.tan(gt_boxes[:, :6])
-    r *= y_scale / x_scale
-    gt_boxes[:, :6] = np.arctan(r)
+    #gt_boxes[:, 3:6] *= scales
+    #gt_boxes[:, 3] *= np.sqrt(np.square(x_scale * np.cos(gt_boxes[:, 6])) + np.square(y_scale * np.sin(gt_boxes[:, 6])))
+    #gt_boxes[:, 4] *= np.sqrt(np.square(x_scale * np.sin(gt_boxes[:, 6])) + np.square(y_scale * np.cos(gt_boxes[:, 6])))
+    #r = np.tan(gt_boxes[:, 6])
+    #r = r * (y_scale / x_scale)
+    #gt_boxes[:, 6] = np.arctan(r)
     return gt_boxes, points
 
 
@@ -57,7 +59,7 @@ def global_translate(gt_boxes, points, noise_translate_std):
 
     noise_translate = np.array([np.random.normal(0, noise_translate_std[0], 1),
                                 np.random.normal(0, noise_translate_std[1], 1),
-                                np.random.normal(0, noise_translate_std[0], 1)]).T
+                                np.random.normal(0, noise_translate_std[2], 1)]).T
 
     points[:, :3] += noise_translate
     gt_boxes[:, :3] += noise_translate

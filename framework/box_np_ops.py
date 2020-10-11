@@ -1,6 +1,6 @@
 import numba
 import numpy as np
-
+import copy
 
 def filter_gt_box_outside_range(gt_boxes, limit_range):
     """remove gtbox outside training range.
@@ -289,9 +289,7 @@ def box_decode(box_encodings, anchors):
 def points_in_rbbox(points, rbbox, lidar=True):
     h_axis = 2
     origin = [0.5, 0.5, 0.5]
-    lwh = rbbox[:, 3:6]
-    lwh[:, 2] = 8
-    rbbox_corners = center_to_corner_box3d(rbbox[:, :3], lwh, rbbox[:, 6], origin=origin, axis=h_axis)
+    rbbox_corners = center_to_corner_box3d(rbbox[:, :3], rbbox[:, 3:6], rbbox[:, 6], origin=origin, axis=h_axis)
     surfaces = corner_to_surfaces_3d(rbbox_corners)
     indices = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
     return indices
@@ -360,8 +358,9 @@ def rotation_3d_in_axis(points, angles, axis=0):
         rot_mat_T = np.stack([[rot_cos, zeros, -rot_sin], [zeros, ones, zeros],
                               [rot_sin, zeros, rot_cos]])
     elif axis == 2 or axis == -1:
-        rot_mat_T = np.stack([[rot_cos, -rot_sin, zeros],
-                              [rot_sin, rot_cos, zeros], [zeros, zeros, ones]])
+        rot_mat_T = np.stack([[rot_cos, rot_sin, zeros],
+                              [-rot_sin, rot_cos, zeros], [zeros, zeros, ones]])
+
     elif axis == 0:
         rot_mat_T = np.stack([[zeros, rot_cos, -rot_sin],
                               [zeros, rot_sin, rot_cos], [ones, zeros, zeros]])
@@ -443,7 +442,7 @@ def rotation_points_single_angle(points, angle, axis=0):
             dtype=points.dtype)
     elif axis == 2 or axis == -1:
         rot_mat_T = np.array(
-            [[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],
+            [[rot_cos, rot_sin, 0], [-rot_sin, rot_cos, 0], [0, 0, 1]],
             dtype=points.dtype)
     elif axis == 0:
         rot_mat_T = np.array(
@@ -454,7 +453,13 @@ def rotation_points_single_angle(points, angle, axis=0):
 
     return points @ rot_mat_T
 
-                     
+
+def minmax_to_corner_3d(minmax_box):
+    ndim = minmax_box.shape[-1] // 2
+    center = minmax_box[..., :ndim]
+    dims = minmax_box[..., ndim:] - center
+    return center_to_corner_box3d(center, dims, origin=0.0)
+
 '''    
 def riou_cc(rbboxes, qrbboxes, standup_thresh=0.0):
     # less than 50ms when used in second one thread. 10x slower than gpu
@@ -706,11 +711,7 @@ def minmax_to_corner_2d_v2(minmax_box):
     return minmax_box[..., [0, 1, 0, 3, 2, 3, 2, 1]].reshape(-1, 4, 2)
 
 
-def minmax_to_corner_3d(minmax_box):
-    ndim = minmax_box.shape[-1] // 2
-    center = minmax_box[..., :ndim]
-    dims = minmax_box[..., ndim:] - center
-    return center_to_corner_box3d(center, dims, origin=0.0)
+
 
 
 def minmax_to_center_2d(minmax_box):

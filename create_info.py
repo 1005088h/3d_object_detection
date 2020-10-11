@@ -4,9 +4,9 @@ import numpy as np
 import fire
 import os
 from framework import box_np_ops
-
-#data_path = '/home/xy/ST/dataset/inhouse/kitti/eval'
-data_path = '/home/xy/ST/dataset/inhouse/kitti/train'
+import copy
+data_path = '/home/xy/ST/dataset/inhouse/kitti/eval' #000294
+#data_path = '/home/xy/ST/dataset/inhouse/kitti/train' #003258
 waymo = False
 waymo_idx = [0, 1, 2, 3, 5, 6, 7]
 
@@ -155,17 +155,18 @@ def add_difficulty_to_annos_v2(info):
     Trv2c = info['calib/Tr_velo_to_cam']
         
     gt_boxes_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
-    #gt_boxes_lidar = box_np_ops.box_camera_to_lidar(gt_boxes_camera, rect, Trv2c)
-    gt_point_table = box_np_ops.points_in_rbbox(points, gt_boxes_lidar)
+    
+    gt_boxes = copy.deepcopy(gt_boxes_lidar)
+    gt_point_table = box_np_ops.points_in_rbbox(points, gt_boxes)
     gt_point_count = gt_point_table.sum(axis=0) 
     annos["num_points"] = gt_point_count
-    hard_mask = gt_point_count < 10
-    moderate_mask = gt_point_count >= 10
-    easy_mask = gt_point_count >= 30
-    annos["difficulty"] = -np.ones(gt_point_count.shape)
-    annos["difficulty"][hard_mask] = 2
-    annos["difficulty"][moderate_mask] = 1
-    annos["difficulty"][easy_mask] = 0
+    
+    gt_boxes = copy.deepcopy(gt_boxes_lidar)
+    gt_boxes[:, 3:6] = gt_boxes[:, 3:6] + np.array([1.2, 0.5, 8])
+    gt_point_table = box_np_ops.points_in_rbbox(points, gt_boxes)
+    gt_point_count = gt_point_table.sum(axis=0)
+    annos["difficulty"] = gt_point_count
+
 
 
 def add_difficulty_to_annos(info):
