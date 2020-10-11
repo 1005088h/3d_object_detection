@@ -433,7 +433,27 @@ def surface_equ_3d_jit(polygon_surfaces):
     return normal_vec, -d
 
 
-    
+def rotation_points_single_angle(points, angle, axis=0):
+    # points: [N, 3]
+    rot_sin = np.sin(angle)
+    rot_cos = np.cos(angle)
+    if axis == 1:
+        rot_mat_T = np.array(
+            [[rot_cos, 0, -rot_sin], [0, 1, 0], [rot_sin, 0, rot_cos]],
+            dtype=points.dtype)
+    elif axis == 2 or axis == -1:
+        rot_mat_T = np.array(
+            [[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],
+            dtype=points.dtype)
+    elif axis == 0:
+        rot_mat_T = np.array(
+            [[1, 0, 0], [0, rot_cos, -rot_sin], [0, rot_sin, rot_cos]],
+            dtype=points.dtype)
+    else:
+        raise ValueError("axis should in range")
+
+    return points @ rot_mat_T
+
                      
 '''    
 def riou_cc(rbboxes, qrbboxes, standup_thresh=0.0):
@@ -621,30 +641,6 @@ def corner_to_standup_nd(boxes_corner):
     standup_boxes.append(np.min(boxes_corner, axis=1))
     standup_boxes.append(np.max(boxes_corner, axis=1))
     return np.concatenate(standup_boxes, -1)
-
-
-
-
-def rotation_points_single_angle(points, angle, axis=0):
-    # points: [N, 3]
-    rot_sin = np.sin(angle)
-    rot_cos = np.cos(angle)
-    if axis == 1:
-        rot_mat_T = np.array(
-            [[rot_cos, 0, -rot_sin], [0, 1, 0], [rot_sin, 0, rot_cos]],
-            dtype=points.dtype)
-    elif axis == 2 or axis == -1:
-        rot_mat_T = np.array(
-            [[rot_cos, -rot_sin, 0], [rot_sin, rot_cos, 0], [0, 0, 1]],
-            dtype=points.dtype)
-    elif axis == 0:
-        rot_mat_T = np.array(
-            [[1, 0, 0], [0, rot_cos, -rot_sin], [0, rot_sin, rot_cos]],
-            dtype=points.dtype)
-    else:
-        raise ValueError("axis should in range")
-
-    return points @ rot_mat_T
 
 
 def rotation_box(box_corners, angle):

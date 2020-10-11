@@ -6,6 +6,7 @@ import framework.box_np_ops as box_np_ops
 import time
 from pathlib import Path
 import matplotlib.pyplot as plt
+from framework import augmentation as agm
 
 class GenericDataset(Dataset):
     def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True):
@@ -28,6 +29,8 @@ class GenericDataset(Dataset):
         car_dim = np.zeros(3)
         truck_dim = np.zeros(3)
         bus_dim = np.zeros(3)
+
+        H, L = [], []
         for info in self.infos:
             if len(info['annos']['name']) > 0:
                 car_mask = info['annos']['name'] == 'car'
@@ -47,10 +50,16 @@ class GenericDataset(Dataset):
 
                 class_mask = car_mask | truck_mask | bus_mask
                 info['annos']['name'][class_mask] = "vehicle"
+                locs = info['annos']["location"][class_mask]
+                dims = info['annos']["dimensions"][class_mask]
+                H.append(locs[:, 2] + dims[:, 2] / 2)
+                L.append(locs[:, 2] - dims[:, 2] / 2)
 
             difficulty_mask = info['annos']["num_points"] > 0
             for key in info['annos']:
                 info['annos'][key] = info['annos'][key][difficulty_mask]
+        H = np.concatenate(H)
+        L = np.concatenate(L)
 
         bus_dim = bus_dim / bus_total
         car_dim = car_dim / car_total
@@ -93,12 +102,10 @@ class GenericDataset(Dataset):
             gt_boxes = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
 
             # data augmentation
-            '''
-            gt_boxes, points = prep.random_flip(gt_boxes, points)
-            gt_boxes, points = prep.global_rotation(gt_boxes, points, rotation=global_rotation_noise)
-            gt_boxes, points = prep.global_scaling_v2(gt_boxes, points, *global_scaling_noise)
-            gt_boxes, points = prep.global_translate(gt_boxes, points, global_loc_noise_std)
-            '''
+            gt_boxes, points = agm.random_flip(gt_boxes, points)
+            gt_boxes, points = agm.global_rotation(gt_boxes, points, rotation=np.pi / 4)
+            gt_boxes, points = agm.global_scaling(gt_boxes, points, min_scale=0.95, max_scale=1.05)
+            gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.25, 0.25, 0.25])
 
             # filter range
             bv_range = self.detection_range[[0, 1, 3, 4]]

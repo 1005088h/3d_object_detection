@@ -160,7 +160,7 @@ def train(config_path=None):
             time_str = 'Time for each frame: %f' % t
             AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
             log_str = 'Step: %d, AP: %f\n' % (step, AP)
-            print(log_str, time_str)
+            print('%s, %s' % (log_str, time_str))
             with open(log_file, 'a+') as f:
                 f.write(log_str)
             net.train()
@@ -174,6 +174,7 @@ def infer():
     voxel_generator = VoxelGenerator(config)
     anchor_assigner = AnchorAssigner(config)
     inference = Inference(config, anchor_assigner)
+
     eval_dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=False)
     eval_dataloader = torch.utils.data.DataLoader(
         eval_dataset,
@@ -186,9 +187,15 @@ def infer():
 
     net = PointPillars(config)
     net.cuda()
+
     model_path = config['model_path']
-    checkpoint = torch.load(model_path)
+    experiment = config['experiment']
+    model_path = os.path.join(model_path, experiment)
+    latest_model_path = os.path.join(model_path, 'latest.pth')
+    checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
+    print('model loaded')
+
     net.half()
     net.eval()
     dt_annos = []
@@ -197,7 +204,7 @@ def infer():
     post_t = 0.0
     data_iter = iter(eval_dataloader)
     for step in range(9999999):
-        print('step', step)
+        print('\rStep %d' % step)
         try:
             example = next(data_iter)
             t = time.time()
@@ -256,4 +263,4 @@ def infer():
 
 if __name__ == "__main__":
     train()
-    # infer()
+    #infer()
