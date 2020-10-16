@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import pickle
 import os
@@ -66,7 +68,7 @@ def train(config_path=None):
         pin_memory=False,
         drop_last=True,
         collate_fn=merge_second_batch)
-    gt_annos = [info["annos"] for info in eval_dataset.infos]
+    eval_annos = [info["annos"] for info in eval_dataset.infos]
 
     net = PointPillars(config)
     net.to(device)
@@ -147,20 +149,23 @@ def train(config_path=None):
             print("# EVAL")
             print("#################################")
             dt_annos = []
-
             t = time.time()
-            count = 1
             eval_total = len(eval_dataloader)
-            for example in iter(eval_dataloader):
-                print('%d / %d' % (count, eval_total))
+            for count, example in enumerate(eval_dataloader, start=1):
+                print('\r%d / %d' % (count, eval_total), end='')
                 example = example_convert_to_torch(example)
                 preds_dict = net(example)
                 dt_annos += inference.infer(example, preds_dict)
             t = (time.time() - t) / len(eval_dataloader)
-            time_str = 'Time for each frame: %f' % t
-            AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
-            log_str = 'Step: %d, AP: %f\n' % (step, AP)
-            print('%s, %s' % (log_str, time_str))
+            print('\nTime for each frame: %f\n' % t)
+            min_overlaps = [0.5, 0.7]
+            gt_annos = copy.deepcopy(eval_annos)
+            APs, rets = get_eval_result(gt_annos, dt_annos, ['vehicle'], min_overlaps)
+            log_str = 'Step: %d' % step
+            for i, (AP, ret) in enumerate(zip(APs, rets)):
+                log_str += ', AP@%.1f: %.5f' % (min_overlaps[i], AP)
+            log_str += '\n'
+            print(log_str)
             with open(log_file, 'a+') as f:
                 f.write(log_str)
             net.train()
@@ -191,7 +196,7 @@ def infer():
     model_path = config['model_path']
     experiment = config['experiment']
     model_path = os.path.join(model_path, experiment)
-    latest_model_path = os.path.join(model_path, 'latest.pth')
+    latest_model_path = os.path.join(model_path, '100000.pth')
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -204,7 +209,7 @@ def infer():
     post_t = 0.0
     data_iter = iter(eval_dataloader)
     for step in range(9999999):
-        print('\rStep %d' % step)
+        print('\rStep %d' % step, end='')
         try:
             example = next(data_iter)
             t = time.time()
@@ -237,7 +242,7 @@ def infer():
     network_t = network_t / len(eval_dataset)
     post_t = post_t / len(eval_dataset)
 
-    print("avg_time : %.5f" % (voxelization_t + toGPU_t + network_t + post_t))
+    print("\navg_time : %.5f" % (voxelization_t + toGPU_t + network_t + post_t))
     print("load_t : %.5f" % load_t)
     print("voxelization_t : %.5f" % voxelization_t)
     print("toGPU_t : %.5f" % toGPU_t)
@@ -247,18 +252,21 @@ def infer():
     with open(config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
 
-    gt_annos = [
-        info["annos"] for info in eval_dataset.infos
-    ]
-    AP, precisions = get_eval_result(gt_annos, dt_annos, ['vehicle'])
-    plt.axis([0, 1, 0, 1])
-    recalls = np.linspace(0.0, 1.0, num=41)
-    plt.plot(recalls, precisions, label="AP: %.4f" % AP)
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('vehicle BEV AP@0.7')
-    plt.legend()
-    plt.show()
+    gt_annos = [info["annos"] for info in eval_dataset.infos]
+    min_overlaps = [0.5, 0.7]
+    APs, rets = get_eval_result(gt_annos, dt_annos, ['vehicle'], min_overlaps)
+    for i, (AP, ret) in enumerate(zip(APs, rets)):
+        precisions = ret["precision"]
+        plt.axis([0, 1, 0, 1])
+        recalls = np.linspace(0.0, 1.0, num=41)
+        AP_str = "AP: %.4f " % AP
+        print(AP_str, end=' ')
+        plt.plot(recalls, precisions, label=AP_str)
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('vehicle BEV AP@%.1f' % min_overlaps[i])
+        plt.legend()
+        plt.show()
 
 
 if __name__ == "__main__":

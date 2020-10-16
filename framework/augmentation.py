@@ -3,7 +3,7 @@ import numpy as np
 #from second.core.geometry import (points_in_convex_polygon_3d_jit,
 #                                    points_in_convex_polygon_jit)
 from framework import box_np_ops
-
+from framework.box_np_ops import points_in_convex_polygon_3d_jit
 
 
 def random_flip(gt_boxes, points):
@@ -26,6 +26,27 @@ def global_rotation(gt_boxes, points, rotation=np.pi / 4):
     gt_boxes[:, 6] += noise_rotation
     return gt_boxes, points
 
+def global_rotation_v2(gt_boxes, points):
+    pitch = 2
+    pitch = np.random.uniform(-pitch, pitch)
+    pitch = pitch / 180 * np.pi
+    points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], pitch, axis=1)
+    gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(gt_boxes[:, :3], pitch, axis=1)
+
+    roll = 1
+    roll = np.random.uniform(-roll, roll)
+    roll = roll / 180 * np.pi
+    points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], roll, axis=0)
+    gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(gt_boxes[:, :3], roll, axis=0)
+
+    yaw = 40
+    yaw = np.random.uniform(-yaw, yaw)
+    yaw = yaw / 180 * np.pi
+    points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], yaw, axis=2)
+    gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(gt_boxes[:, :3], yaw, axis=2)
+    gt_boxes[:, 6] += yaw
+    return gt_boxes, points
+
 
 def global_scaling(gt_boxes, points, min_scale=0.95, max_scale=1.05):
     noise_scale = np.random.uniform(min_scale, max_scale)
@@ -34,18 +55,19 @@ def global_scaling(gt_boxes, points, min_scale=0.95, max_scale=1.05):
     return gt_boxes, points
 
 def global_scaling_v2(gt_boxes, points, min_scale=0.85, max_scale=1.15):
-    x_scale = np.random.uniform(0.9, 1.1)
-    y_scale = np.random.uniform(0.9, 1.1)
+    x_scale = np.random.uniform(0.85, 1.15)
+    y_scale = np.random.uniform(0.85, 1.15)
     z_scale = np.random.uniform(0.95, 1.05)
     scales = np.array([x_scale, y_scale, z_scale])
     points[:, :3] *= scales
     gt_boxes[:, :3] *= scales
-    #gt_boxes[:, 3:6] *= scales
-    #gt_boxes[:, 3] *= np.sqrt(np.square(x_scale * np.cos(gt_boxes[:, 6])) + np.square(y_scale * np.sin(gt_boxes[:, 6])))
-    #gt_boxes[:, 4] *= np.sqrt(np.square(x_scale * np.sin(gt_boxes[:, 6])) + np.square(y_scale * np.cos(gt_boxes[:, 6])))
-    #r = np.tan(gt_boxes[:, 6])
-    #r = r * (y_scale / x_scale)
-    #gt_boxes[:, 6] = np.arctan(r)
+
+    gt_boxes[:, 3] *= np.sqrt(np.square(x_scale * np.cos(gt_boxes[:, 6])) + np.square(y_scale * np.sin(gt_boxes[:, 6])))
+    gt_boxes[:, 4] *= np.sqrt(np.square(x_scale * np.sin(gt_boxes[:, 6])) + np.square(y_scale * np.cos(gt_boxes[:, 6])))
+    gt_boxes[:, 5] *= z_scale
+    r = np.tan(gt_boxes[:, 6])
+    r = r * (y_scale / x_scale)
+    gt_boxes[:, 6] = np.arctan(r)
     return gt_boxes, points
 
 
@@ -66,6 +88,53 @@ def global_translate(gt_boxes, points, noise_translate_std):
 
     return gt_boxes, points
 
+
+def noise_per_object(gt_boxes,
+                     points=None,
+                     rotation_perturb=np.pi / 4,
+                     center_noise_std=1.0,
+                     global_random_rot_range=np.pi / 4,
+                     num_try=100):
+
+    num_boxes = gt_boxes.shape[0]
+    rotation_perturb = [-rotation_perturb, rotation_perturb]
+    global_random_rot_range = [-global_random_rot_range, global_random_rot_range]
+    enable_grot = np.abs(global_random_rot_range[0] - global_random_rot_range[1]) >= 1e-3
+    center_noise_std = [center_noise_std, center_noise_std, center_noise_std]
+    valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
+
+    center_noise_std = np.array(center_noise_std, dtype=gt_boxes.dtype)
+    loc_noises = np.random.normal(scale=center_noise_std, size=[num_boxes, num_try, 3])
+    rot_noises = np.random.uniform(rotation_perturb[0], rotation_perturb[1], size=[num_boxes, num_try])
+    gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
+    grot_lowers = global_random_rot_range[0] - gt_grots
+    grot_uppers = global_random_rot_range[1] - gt_grots
+    global_rot_noises = np.random.uniform(
+        grot_lowers[..., np.newaxis],
+        grot_uppers[..., np.newaxis],
+        size=[num_boxes, num_try])
+    gt_box_corners = box_np_ops.center_to_corner_box3d(
+        gt_boxes[:, :3],
+        gt_boxes[:, 3:6],
+        gt_boxes[:, 6],
+        origin=[0.5, 0.5, 0.5],
+        axis=2)
+
+    if not enable_grot:
+        selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],
+                                       valid_mask, loc_noises, rot_noises)
+    else:
+        selected_noise = noise_per_box_v2_(gt_boxes[:, [0, 1, 3, 4, 6]],
+                                           valid_mask, loc_noises,
+                                           rot_noises, global_rot_noises)
+    loc_transforms = _select_transform(loc_noises, selected_noise)
+    rot_transforms = _select_transform(rot_noises, selected_noise)
+    surfaces = box_np_ops.corner_to_surfaces_3d_jit(gt_box_corners)
+    point_masks = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
+    points_transform_(points, gt_boxes[:, :3], point_masks, loc_transforms,
+                      rot_transforms, valid_mask)
+    box3d_transform_(gt_boxes, loc_transforms, rot_transforms, valid_mask)
+
 def remove_points_in_boxes(points, boxes):
     masks = box_np_ops.points_in_rbbox(points, boxes)
     points = points[np.logical_not(masks.any(-1))]
@@ -83,17 +152,17 @@ def _rotation_matrix_3d_(rot_mat_T, angle, axis):
     rot_sin = np.sin(angle)
     rot_cos = np.cos(angle)
     rot_mat_T[:] = np.eye(3)
-    if axis == 1:
+    if axis == 1:#pitch
         rot_mat_T[0, 0] = rot_cos
         rot_mat_T[0, 2] = -rot_sin
         rot_mat_T[2, 0] = rot_sin
         rot_mat_T[2, 2] = rot_cos
-    elif axis == 2 or axis == -1:
+    elif axis == 2 or axis == -1:#yaw
         rot_mat_T[0, 0] = rot_cos
         rot_mat_T[0, 1] = -rot_sin
         rot_mat_T[1, 0] = rot_sin
         rot_mat_T[1, 1] = rot_cos
-    elif axis == 0:
+    elif axis == 0:#roll
         rot_mat_T[1, 1] = rot_cos
         rot_mat_T[1, 2] = -rot_sin
         rot_mat_T[2, 1] = rot_sin
@@ -311,10 +380,10 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
             for j in range(num_tests):
                 current_box[0, :] = boxes[i]
                 current_radius = np.sqrt(boxes[i, 0]**2 + boxes[i, 1]**2)
-                current_grot = np.arctan2(boxes[i, 0], boxes[i, 1])
+                current_grot = np.arctan2(boxes[i, 1], boxes[i, 0])
                 dst_grot = current_grot + global_rot_noises[i, j]
-                dst_pos[0] = current_radius * np.sin(dst_grot)
-                dst_pos[1] = current_radius * np.cos(dst_grot)
+                dst_pos[0] = current_radius * np.cos(dst_grot)
+                dst_pos[1] = current_radius * np.sin(dst_grot)
                 current_box[0, :2] = dst_pos
                 current_box[0, -1] += (dst_grot - current_grot)
 
@@ -324,12 +393,9 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
                 rot_mat_T[0, 1] = -rot_sin
                 rot_mat_T[1, 0] = rot_sin
                 rot_mat_T[1, 1] = rot_cos
-                current_corners[:] = current_box[0, 2:
-                                                 4] * corners_norm @ rot_mat_T + current_box[0, :
-                                                                                             2]
+                current_corners[:] = current_box[0, 2:4] * corners_norm @ rot_mat_T + current_box[0, :2]
                 current_corners -= current_box[0, :2]
-                _rotation_box2d_jit_(current_corners, rot_noises[i, j],
-                                     rot_mat_T)
+                _rotation_box2d_jit_(current_corners, rot_noises[i, j], rot_mat_T)
                 current_corners += current_box[0, :2] + loc_noises[i, j, :2]
                 coll_mat = box_collision_test(
                     current_corners.reshape(1, 4, 2), box_corners)
@@ -476,6 +542,176 @@ def get_group_center(locs, group_ids):
 
 
 
+
+def noise_per_object_v2_(gt_boxes,
+                         points=None,
+                         valid_mask=None,
+                         rotation_perturb=np.pi / 4,
+                         center_noise_std=1.0,
+                         global_random_rot_range=np.pi / 4,
+                         num_try=100):
+    """random rotate or remove each groundtrutn independently.
+    use kitti viewer to test this function points_transform_
+
+    Args:
+        gt_boxes: [N, 7], gt box in lidar.points_transform_
+        points: [M, 4], point cloud in lidar.
+    """
+    num_boxes = gt_boxes.shape[0]
+    if not isinstance(rotation_perturb, (list, tuple, np.ndarray)):
+        rotation_perturb = [-rotation_perturb, rotation_perturb]
+    if not isinstance(global_random_rot_range, (list, tuple, np.ndarray)):
+        global_random_rot_range = [
+            -global_random_rot_range, global_random_rot_range
+        ]
+
+    if not isinstance(center_noise_std, (list, tuple, np.ndarray)):
+        center_noise_std = [
+            center_noise_std, center_noise_std, center_noise_std
+        ]
+    if valid_mask is None:
+        valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
+    center_noise_std = np.array(center_noise_std, dtype=gt_boxes.dtype)
+    loc_noises = np.random.normal(
+        scale=center_noise_std, size=[num_boxes, num_try, 3])
+    # loc_noises = np.random.uniform(
+    #     -center_noise_std, center_noise_std, size=[num_boxes, num_try, 3])
+    rot_noises = np.random.uniform(
+        rotation_perturb[0], rotation_perturb[1], size=[num_boxes, num_try])
+    gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
+    grot_lowers = global_random_rot_range[0] - gt_grots
+    grot_uppers = global_random_rot_range[1] - gt_grots
+    global_rot_noises = np.random.uniform(
+        grot_lowers[..., np.newaxis],
+        grot_uppers[..., np.newaxis],
+        size=[num_boxes, num_try])
+
+    origin = [0.5, 0.5, 0]
+    gt_box_corners = box_np_ops.center_to_corner_box3d(
+        gt_boxes[:, :3],
+        gt_boxes[:, 3:6],
+        gt_boxes[:, 6],
+        origin=origin,
+        axis=2)
+    if np.abs(global_random_rot_range[0] - global_random_rot_range[1]) < 1e-3:
+        selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],
+                                       valid_mask, loc_noises, rot_noises)
+    else:
+        selected_noise = noise_per_box_v2_(gt_boxes[:, [0, 1, 3, 4, 6]],
+                                           valid_mask, loc_noises, rot_noises,
+                                           global_rot_noises)
+    loc_transforms = _select_transform(loc_noises, selected_noise)
+    rot_transforms = _select_transform(rot_noises, selected_noise)
+    if points is not None:
+        surfaces = box_np_ops.corner_to_surfaces_3d_jit(gt_box_corners)
+        point_masks = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
+        points_transform_(points, gt_boxes[:, :3], point_masks, loc_transforms,
+                          rot_transforms, valid_mask)
+
+    box3d_transform_(gt_boxes, loc_transforms, rot_transforms, valid_mask)
+
+
+
+
+'''
+def global_rotation_v2(gt_boxes, points, min_rad=-np.pi / 4,
+                       max_rad=np.pi / 4):
+    noise_rotation = np.random.uniform(min_rad, max_rad)
+    points[:, :3] = box_np_ops.rotation_points_single_angle(
+        points[:, :3], noise_rotation, axis=2)
+    gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(
+        gt_boxes[:, :3], noise_rotation, axis=2)
+    gt_boxes[:, 6] += noise_rotation
+    return gt_boxes, points
+'''
+
+
+@numba.jit(nopython=True)
+def box_collision_test(boxes, qboxes, clockwise=True):
+    N = boxes.shape[0]
+    K = qboxes.shape[0]
+    ret = np.zeros((N, K), dtype=np.bool_)
+    slices = np.array([1, 2, 3, 0])
+    lines_boxes = np.stack(
+        (boxes, boxes[:, slices, :]), axis=2)  # [N, 4, 2(line), 2(xy)]
+    lines_qboxes = np.stack((qboxes, qboxes[:, slices, :]), axis=2)
+    # vec = np.zeros((2,), dtype=boxes.dtype)
+    boxes_standup = box_np_ops.corner_to_standup_nd_jit(boxes)
+    qboxes_standup = box_np_ops.corner_to_standup_nd_jit(qboxes)
+    for i in range(N):
+        for j in range(K):
+            # calculate standup first
+            iw = (min(boxes_standup[i, 2], qboxes_standup[j, 2]) - max(
+                boxes_standup[i, 0], qboxes_standup[j, 0]))
+            if iw > 0:
+                ih = (min(boxes_standup[i, 3], qboxes_standup[j, 3]) - max(
+                    boxes_standup[i, 1], qboxes_standup[j, 1]))
+                if ih > 0:
+                    for k in range(4):
+                        for l in range(4):
+                            A = lines_boxes[i, k, 0]
+                            B = lines_boxes[i, k, 1]
+                            C = lines_qboxes[j, l, 0]
+                            D = lines_qboxes[j, l, 1]
+                            acd = (D[1] - A[1]) * (C[0] - A[0]) > (
+                                C[1] - A[1]) * (D[0] - A[0])
+                            bcd = (D[1] - B[1]) * (C[0] - B[0]) > (
+                                C[1] - B[1]) * (D[0] - B[0])
+                            if acd != bcd:
+                                abc = (C[1] - A[1]) * (B[0] - A[0]) > (
+                                    B[1] - A[1]) * (C[0] - A[0])
+                                abd = (D[1] - A[1]) * (B[0] - A[0]) > (
+                                    B[1] - A[1]) * (D[0] - A[0])
+                                if abc != abd:
+                                    ret[i, j] = True  # collision.
+                                    break
+                        if ret[i, j] is True:
+                            break
+                    if ret[i, j] is False:
+                        # now check complete overlap.
+                        # box overlap qbox:
+                        box_overlap_qbox = True
+                        for l in range(4):  # point l in qboxes
+                            for k in range(4):  # corner k in boxes
+                                vec = boxes[i, k] - boxes[i, (k + 1) % 4]
+                                if clockwise:
+                                    vec = -vec
+                                cross = vec[1] * (
+                                    boxes[i, k, 0] - qboxes[j, l, 0])
+                                cross -= vec[0] * (
+                                    boxes[i, k, 1] - qboxes[j, l, 1])
+                                if cross >= 0:
+                                    box_overlap_qbox = False
+                                    break
+                            if box_overlap_qbox is False:
+                                break
+
+                        if box_overlap_qbox is False:
+                            qbox_overlap_box = True
+                            for l in range(4):  # point l in boxes
+                                for k in range(4):  # corner k in qboxes
+                                    vec = qboxes[j, k] - qboxes[j, (k + 1) % 4]
+                                    if clockwise:
+                                        vec = -vec
+                                    cross = vec[1] * (
+                                        qboxes[j, k, 0] - boxes[i, l, 0])
+                                    cross -= vec[0] * (
+                                        qboxes[j, k, 1] - boxes[i, l, 1])
+                                    if cross >= 0:  #
+                                        qbox_overlap_box = False
+                                        break
+                                if qbox_overlap_box is False:
+                                    break
+                            if qbox_overlap_box:
+                                ret[i, j] = True  # collision.
+                        else:
+                            ret[i, j] = True  # collision.
+    return ret
+
+
+
+
+'''
 def noise_per_object_v3_(gt_boxes,
                          points=None,
                          valid_mask=None,
@@ -570,173 +806,4 @@ def noise_per_object_v3_(gt_boxes,
                           rot_transforms, valid_mask)
 
     box3d_transform_(gt_boxes, loc_transforms, rot_transforms, valid_mask)
-
-
-def noise_per_object_v2_(gt_boxes,
-                         points=None,
-                         valid_mask=None,
-                         rotation_perturb=np.pi / 4,
-                         center_noise_std=1.0,
-                         global_random_rot_range=np.pi / 4,
-                         num_try=100):
-    """random rotate or remove each groundtrutn independently.
-    use kitti viewer to test this function points_transform_
-
-    Args:
-        gt_boxes: [N, 7], gt box in lidar.points_transform_
-        points: [M, 4], point cloud in lidar.
-    """
-    num_boxes = gt_boxes.shape[0]
-    if not isinstance(rotation_perturb, (list, tuple, np.ndarray)):
-        rotation_perturb = [-rotation_perturb, rotation_perturb]
-    if not isinstance(global_random_rot_range, (list, tuple, np.ndarray)):
-        global_random_rot_range = [
-            -global_random_rot_range, global_random_rot_range
-        ]
-
-    if not isinstance(center_noise_std, (list, tuple, np.ndarray)):
-        center_noise_std = [
-            center_noise_std, center_noise_std, center_noise_std
-        ]
-    if valid_mask is None:
-        valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
-    center_noise_std = np.array(center_noise_std, dtype=gt_boxes.dtype)
-    loc_noises = np.random.normal(
-        scale=center_noise_std, size=[num_boxes, num_try, 3])
-    # loc_noises = np.random.uniform(
-    #     -center_noise_std, center_noise_std, size=[num_boxes, num_try, 3])
-    rot_noises = np.random.uniform(
-        rotation_perturb[0], rotation_perturb[1], size=[num_boxes, num_try])
-    gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
-    grot_lowers = global_random_rot_range[0] - gt_grots
-    grot_uppers = global_random_rot_range[1] - gt_grots
-    global_rot_noises = np.random.uniform(
-        grot_lowers[..., np.newaxis],
-        grot_uppers[..., np.newaxis],
-        size=[num_boxes, num_try])
-
-    origin = [0.5, 0.5, 0]
-    gt_box_corners = box_np_ops.center_to_corner_box3d(
-        gt_boxes[:, :3],
-        gt_boxes[:, 3:6],
-        gt_boxes[:, 6],
-        origin=origin,
-        axis=2)
-    if np.abs(global_random_rot_range[0] - global_random_rot_range[1]) < 1e-3:
-        selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],
-                                       valid_mask, loc_noises, rot_noises)
-    else:
-        selected_noise = noise_per_box_v2_(gt_boxes[:, [0, 1, 3, 4, 6]],
-                                           valid_mask, loc_noises, rot_noises,
-                                           global_rot_noises)
-    loc_transforms = _select_transform(loc_noises, selected_noise)
-    rot_transforms = _select_transform(rot_noises, selected_noise)
-    if points is not None:
-        surfaces = box_np_ops.corner_to_surfaces_3d_jit(gt_box_corners)
-        point_masks = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
-        points_transform_(points, gt_boxes[:, :3], point_masks, loc_transforms,
-                          rot_transforms, valid_mask)
-
-    box3d_transform_(gt_boxes, loc_transforms, rot_transforms, valid_mask)
-
-
-
-
-
-def global_rotation_v2(gt_boxes, points, min_rad=-np.pi / 4,
-                       max_rad=np.pi / 4):
-    noise_rotation = np.random.uniform(min_rad, max_rad)
-    points[:, :3] = box_np_ops.rotation_points_single_angle(
-        points[:, :3], noise_rotation, axis=2)
-    gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(
-        gt_boxes[:, :3], noise_rotation, axis=2)
-    gt_boxes[:, 6] += noise_rotation
-    return gt_boxes, points
-
-
-
-@numba.jit(nopython=True)
-def box_collision_test(boxes, qboxes, clockwise=True):
-    N = boxes.shape[0]
-    K = qboxes.shape[0]
-    ret = np.zeros((N, K), dtype=np.bool_)
-    slices = np.array([1, 2, 3, 0])
-    lines_boxes = np.stack(
-        (boxes, boxes[:, slices, :]), axis=2)  # [N, 4, 2(line), 2(xy)]
-    lines_qboxes = np.stack((qboxes, qboxes[:, slices, :]), axis=2)
-    # vec = np.zeros((2,), dtype=boxes.dtype)
-    boxes_standup = box_np_ops.corner_to_standup_nd_jit(boxes)
-    qboxes_standup = box_np_ops.corner_to_standup_nd_jit(qboxes)
-    for i in range(N):
-        for j in range(K):
-            # calculate standup first
-            iw = (min(boxes_standup[i, 2], qboxes_standup[j, 2]) - max(
-                boxes_standup[i, 0], qboxes_standup[j, 0]))
-            if iw > 0:
-                ih = (min(boxes_standup[i, 3], qboxes_standup[j, 3]) - max(
-                    boxes_standup[i, 1], qboxes_standup[j, 1]))
-                if ih > 0:
-                    for k in range(4):
-                        for l in range(4):
-                            A = lines_boxes[i, k, 0]
-                            B = lines_boxes[i, k, 1]
-                            C = lines_qboxes[j, l, 0]
-                            D = lines_qboxes[j, l, 1]
-                            acd = (D[1] - A[1]) * (C[0] - A[0]) > (
-                                C[1] - A[1]) * (D[0] - A[0])
-                            bcd = (D[1] - B[1]) * (C[0] - B[0]) > (
-                                C[1] - B[1]) * (D[0] - B[0])
-                            if acd != bcd:
-                                abc = (C[1] - A[1]) * (B[0] - A[0]) > (
-                                    B[1] - A[1]) * (C[0] - A[0])
-                                abd = (D[1] - A[1]) * (B[0] - A[0]) > (
-                                    B[1] - A[1]) * (D[0] - A[0])
-                                if abc != abd:
-                                    ret[i, j] = True  # collision.
-                                    break
-                        if ret[i, j] is True:
-                            break
-                    if ret[i, j] is False:
-                        # now check complete overlap.
-                        # box overlap qbox:
-                        box_overlap_qbox = True
-                        for l in range(4):  # point l in qboxes
-                            for k in range(4):  # corner k in boxes
-                                vec = boxes[i, k] - boxes[i, (k + 1) % 4]
-                                if clockwise:
-                                    vec = -vec
-                                cross = vec[1] * (
-                                    boxes[i, k, 0] - qboxes[j, l, 0])
-                                cross -= vec[0] * (
-                                    boxes[i, k, 1] - qboxes[j, l, 1])
-                                if cross >= 0:
-                                    box_overlap_qbox = False
-                                    break
-                            if box_overlap_qbox is False:
-                                break
-
-                        if box_overlap_qbox is False:
-                            qbox_overlap_box = True
-                            for l in range(4):  # point l in boxes
-                                for k in range(4):  # corner k in qboxes
-                                    vec = qboxes[j, k] - qboxes[j, (k + 1) % 4]
-                                    if clockwise:
-                                        vec = -vec
-                                    cross = vec[1] * (
-                                        qboxes[j, k, 0] - boxes[i, l, 0])
-                                    cross -= vec[0] * (
-                                        qboxes[j, k, 1] - boxes[i, l, 1])
-                                    if cross >= 0:  #
-                                        qbox_overlap_box = False
-                                        break
-                                if qbox_overlap_box is False:
-                                    break
-                            if qbox_overlap_box:
-                                ret[i, j] = True  # collision.
-                        else:
-                            ret[i, j] = True  # collision.
-    return ret
-
-
-
-
+'''

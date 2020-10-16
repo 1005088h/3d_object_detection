@@ -22,17 +22,17 @@ class PointNet(nn.Module):
         in_channels = num_input_features
         out_channels = 64
         model = [nn.Conv1d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                 nn.BatchNorm1d(out_channels),
+                 nn.InstanceNorm1d(out_channels),
                  nn.ReLU(True)]
+
+        '''
+        model += [nn.Conv1d(out_channels, out_channels, kernel_size=1, padding=0, bias=False),
+                 nn.InstanceNorm1d(out_channels),
+                 nn.ReLU(True)]
+        '''
 
         self.pfn_layers = nn.Sequential(*model)
-        '''
-        model = [nn.Conv1d(64, out_channels, kernel_size=1, padding=0, bias=False),
-                 nn.BatchNorm1d(out_channels),
-                 nn.ReLU(True)]
 
-        self.pfn_layers2 = nn.Sequential(*model)
-        '''
         self.out_channels = out_channels
 
     def forward(self, voxels, num_point_per_voxel, coors):
@@ -41,6 +41,7 @@ class PointNet(nn.Module):
         f_cluster = voxels[:, :, :3] - points_mean
 
         # Find distance of x, y, and z from pillar center
+        # coors [Batch X Y Z]
         f_center = torch.zeros_like(voxels[:, :, :2])
         f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 1].float().unsqueeze(1) * self.vx + self.x_offset)
         f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 2].float().unsqueeze(1) * self.vy + self.y_offset)
@@ -131,9 +132,12 @@ class RPN(nn.Module):
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
         for i in range(layer_nums[0]):
+            '''
             model += [nn.Conv2d(num_filters[0], num_filters[0], 3, padding=1),
                       norm_layer(num_filters[0]),
                       nn.ReLU()]
+            '''
+            model += [Resnet(num_filters[0], norm_layer)]
         self.block1 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
@@ -146,10 +150,13 @@ class RPN(nn.Module):
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
         for i in range(layer_nums[1]):
+            '''
             model += [nn.Conv2d(num_filters[1], num_filters[1], 3, padding=1),
                       norm_layer(num_filters[1]),
                       nn.ReLU()]
-            self.block2 = Sequential(*model)
+            '''
+            model += [Resnet(num_filters[1], norm_layer)]
+        self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
                                stride=upsample_strides[1]),
@@ -162,9 +169,12 @@ class RPN(nn.Module):
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
         for i in range(layer_nums[2]):
+            '''
             model += [nn.Conv2d(num_filters[2], num_filters[2], 3, padding=1),
                       norm_layer(num_filters[2]),
                       nn.ReLU()]
+            '''
+            model += [Resnet(num_filters[2], norm_layer)]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
@@ -228,3 +238,37 @@ class PointPillars(nn.Module):
 
         return preds_dict
 
+class SELayer(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SELayer, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
+
+class Resnet(nn.Module):
+    """Define a Resnet block"""
+
+    def __init__(self, dim, norm_layer):
+
+        super(Resnet, self).__init__()
+        conv_block = []
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=1), norm_layer(dim), nn.ReLU(True)]
+        self.conv_block = nn.Sequential(*conv_block)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        """Forward function (with skip connections)"""
+        x = x + self.conv_block(x)  # add skip connections
+        out = self.relu(x)
+        return out

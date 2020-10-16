@@ -64,7 +64,7 @@ class PCViewer(QMainWindow):
             config = json.load(f)
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
-        dataset = GenericDataset(config, info_path, voxel_generator, anchor_assigner, training=True)
+        dataset = GenericDataset(config, info_path, voxel_generator, anchor_assigner, training=True, augm=False)
         return dataset
 
     def init_ui(self):
@@ -281,6 +281,7 @@ class PCViewer(QMainWindow):
             rots = detection_anno['rotation_y']
             scores = detection_anno['score']
             label = detection_anno['name']
+            #num_points = detection_anno['num_points']
 
             dt_box_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
             dt_boxes_corners = box_np_ops.center_to_corner_box3d(
@@ -313,8 +314,8 @@ class PCViewer(QMainWindow):
                 dt_scores_text = [
                     # f'score={s:.2f}, iou={i:.2f}'
                     # for s, i in zip(label, dt_to_gt_box_iou)
-                    f'score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}, iou_3d={iou_3d:.2f}'
-                    for s, x, y, iou, iou_3d in zip(scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou, dt_to_gt_box_3diou)
+                    f'score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}'
+                    for s, x, y, iou in zip(scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou)
                 ]
             else:
                 dt_scores_text = [

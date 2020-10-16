@@ -218,69 +218,82 @@ def eval_AP(gt_annos, dt_annos, current_classes, min_overlaps):
     N_SAMPLE_PTS = 41
     num_minoverlap = len(min_overlaps)
     num_class = len(current_classes)
-    precision = np.zeros([N_SAMPLE_PTS])
-    recall = np.zeros([N_SAMPLE_PTS])
+    ret_dicts = []
+    for min_overlap in min_overlaps:
+        precision = np.zeros([N_SAMPLE_PTS])
+        recall = np.zeros([N_SAMPLE_PTS])
+        for m, current_class in enumerate(current_classes):
+            # ignored_gts, ignored_dets(maskes for current class) : 0 for current class, -1 for ignore class
+            ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class)
+            thresholdss = []
+            for i in range(len(gt_annos)):
+                # assign dt to gt based on highest score and min_overlap and return the scores list/thresholdss
+                rets = compute_statistics_jit(
+                    overlaps[i],
+                    ignored_gts[i],
+                    ignored_dets[i],
+                    dt_score_list[i].astype('float32'),
+                    min_overlap=min_overlap,
+                    thresh=0.0,
+                    compute_fp=False)
+                tp, fp, fn, thresholds = rets
+                thresholdss += thresholds.tolist()
+            thresholdss = np.array(thresholdss)
+            # get scores on 41 recall positions, every 1/40 of number of gt take one score
+            thresholds = get_thresholds(thresholdss, total_num_valid_gt)
+            thresholds = np.array(thresholds)
+            pr = np.zeros([len(thresholds), 3])
+            idx = 0
+            for j, num_part in enumerate(split_parts):
+                ignored_dets_part = np.concatenate(
+                    ignored_dets[idx:idx + num_part], 0)
+                ignored_gts_part = np.concatenate(
+                    ignored_gts[idx:idx + num_part], 0)
+                dt_scores = np.concatenate(
+                    dt_score_list[idx:idx + num_part], 0)
+                fused_compute_statistics(
+                    parted_overlaps[j],
+                    pr,
+                    total_gt_num[idx:idx + num_part],
+                    total_dt_num[idx:idx + num_part],
+                    ignored_gts_part,
+                    ignored_dets_part,
+                    dt_scores.astype('float32'),
+                    min_overlap=min_overlap,
+                    thresholds=thresholds)
+                idx += num_part
 
-    for m, current_class in enumerate(current_classes):
-        # ignored_gts, ignored_dets(maskes for current class) : 0 for current class, -1 for ignore class
-        ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class)
-        thresholdss = []
-        for i in range(len(gt_annos)):
-            # assign dt to gt based on highest score and min_overlap and return the scores list/thresholdss
-            rets = compute_statistics_jit(
-                overlaps[i],
-                ignored_gts[i],
-                ignored_dets[i],
-                dt_score_list[i].astype('float32'),
-                min_overlap=min_overlaps[0],
-                thresh=0.0,
-                compute_fp=False)
-            tp, fp, fn, thresholds = rets
-            thresholdss += thresholds.tolist()
-        thresholdss = np.array(thresholdss)
-        # get scores on 41 recall positions, every 1/40 of number of gt take one score
-        thresholds = get_thresholds(thresholdss, total_num_valid_gt)
-        thresholds = np.array(thresholds)
-        pr = np.zeros([len(thresholds), 3])
-        idx = 0
-        for j, num_part in enumerate(split_parts):
-            ignored_dets_part = np.concatenate(
-                ignored_dets[idx:idx + num_part], 0)
-            ignored_gts_part = np.concatenate(
-                ignored_gts[idx:idx + num_part], 0)
-            dt_scores = np.concatenate(
-                dt_score_list[idx:idx + num_part], 0)
-            fused_compute_statistics(
-                parted_overlaps[j],
-                pr,
-                total_gt_num[idx:idx + num_part],
-                total_dt_num[idx:idx + num_part],
-                ignored_gts_part,
-                ignored_dets_part,
-                dt_scores.astype('float32'),
-                min_overlap=min_overlaps[0],
-                thresholds=thresholds)
-            idx += num_part
+            for i in range(len(thresholds)):
+                recall[i] = pr[i, 0] / (pr[i, 0] + pr[i, 2])
+                precision[i] = pr[i, 0] / (pr[i, 0] + pr[i, 1])
+            for i in range(len(thresholds)):
+                precision[i] = np.max(precision[i:], axis=-1)
+                recall[i] = np.max(recall[i:], axis=-1)
+        ret_dict = {
+            "recall": recall,
+            "precision": precision
+        }
+        ret_dicts.append(ret_dict)
+    return ret_dicts
 
-        for i in range(len(thresholds)):
-            recall[i] = pr[i, 0] / (pr[i, 0] + pr[i, 2])
-            precision[i] = pr[i, 0] / (pr[i, 0] + pr[i, 1])
-        for i in range(len(thresholds)):
-            precision[i] = np.max(precision[i:], axis=-1)
-            recall[i] = np.max(recall[i:], axis=-1)
-    ret_dict = {
-        "recall": recall,
-        "precision": precision
-    }
-    return ret_dict
-
-def get_mAP_v2(prec):
+def get_mAP(prec):
     sums = 0
     for i in range(0, prec.shape[-1], 4):
         sums = sums + prec[i]
     return sums / 11 * 100
    
-def get_eval_result(gt_annos, dt_annos, class_names=['vehicle']):
-    ret = eval_AP(gt_annos, dt_annos, class_names, min_overlaps=[0.5])
-    mAP_bev = get_mAP_v2(ret["precision"])
-    return mAP_bev, ret["precision"]
+def get_eval_result(gt_annos, dt_annos, class_names=['vehicle'], min_overlaps=[0.5, 0.7]):
+
+    num_points_thresh = 0
+    keys = ["name", "location", "dimensions", "rotation_y"]
+    for gt_anno in gt_annos:
+        num_points_mask = gt_anno["difficulty"] > num_points_thresh
+        for key in keys:
+            gt_anno[key] = gt_anno[key][num_points_mask]
+
+    rets = eval_AP(gt_annos, dt_annos, class_names, min_overlaps)
+    mAPs_bev = []
+    for ret in rets:
+        mAP_bev = get_mAP(ret["precision"])
+        mAPs_bev.append(mAP_bev)
+    return mAPs_bev, rets

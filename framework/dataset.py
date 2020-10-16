@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from framework import augmentation as agm
 
 class GenericDataset(Dataset):
-    def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True):
+    def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True, augm=True):
         with open(info_path, 'rb') as f:
             self.infos = pickle.load(f)
         self.root_dir = Path(info_path).parent
@@ -20,6 +20,7 @@ class GenericDataset(Dataset):
         self.detection_range = config['detection_range']
         self.grid_size = config['grid_size']
         self.training = training
+        self.augm = augm
         self.voxelization_t = 0.0
         self.load_t = 0.0
 
@@ -31,9 +32,14 @@ class GenericDataset(Dataset):
         bus_dim = np.zeros(3)
 
         H, L = [], []
-        false_box_count = 0
         for idx, info in enumerate(self.infos):
             if len(info['annos']['name']) > 0:
+                if self.training:
+                    difficulty_mask = info['annos']["difficulty"] > 0
+                    # difficulty_mask = info['annos']["num_points"] > 5
+                    for key in info['annos']:
+                        info['annos'][key] = info['annos'][key][difficulty_mask]
+
                 car_mask = info['annos']['name'] == 'car'
                 dims = info['annos']["dimensions"][car_mask]
                 car_dim += np.sum(dims, axis=0)
@@ -56,18 +62,7 @@ class GenericDataset(Dataset):
                 H.append(locs[:, 2] + dims[:, 2] / 2)
                 L.append(locs[:, 2] - dims[:, 2] / 2)
 
-                difficulty_mask = info['annos']["difficulty"] > 0
-                for key in info['annos']:
-                    info['annos'][key] = info['annos'][key][difficulty_mask]
 
-                num_mask = info['annos']["num_points"] == 0
-                #class_mask = info['annos']['name'] == "vehicle"
-                #num_mask = class_mask & num_mask
-                if num_mask.sum() > 0:
-                    false_box_count += num_mask.sum()
-                    #info['annos']['name'][num_mask] = "ignore"
-                    print("False empty boxes in frame: %d" % idx)
-        print("Total false empty boxes : %d" % false_box_count)
         H = np.concatenate(H)
         L = np.concatenate(L)
         bus_dim = bus_dim / bus_total
@@ -109,11 +104,14 @@ class GenericDataset(Dataset):
             difficulty = annos["difficulty"][gt_class_mask]
             gt_boxes = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
 
+
             # data augmentation
-            gt_boxes, points = agm.random_flip(gt_boxes, points)
-            gt_boxes, points = agm.global_rotation(gt_boxes, points, rotation=np.pi / 8)
-            gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
-            gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.25, 0.25, 0.15])
+            if self.augm:
+                points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
+                gt_boxes, points = agm.random_flip(gt_boxes, points)
+                gt_boxes, points = agm.global_rotation_v2(gt_boxes, points)
+                gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
+                gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.35, 0.35, 0.25])
 
             # filter range
             bv_range = self.detection_range[[0, 1, 3, 4]]
@@ -130,10 +128,17 @@ class GenericDataset(Dataset):
         self.points = points
         t = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
+
         '''
+        v_points = []
+        for i, (v, p) in enumerate(zip(voxels, num_points_per_voxel)):
+            v_points.append(v[:p])
+        example['v_points'] = v_points
+        
+        v_points = np.concatenate(v_points)
         count = 0
         for num in num_points_per_voxel:
-            if num < 30:
+            if num < 10:
                 count += 1
         print(count / len(num_points_per_voxel))
         '''
@@ -141,12 +146,12 @@ class GenericDataset(Dataset):
         voxel_size = self.voxel_generator.voxel_size
         offset = self.voxel_generator.offset
         anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset)
+        self.voxelization_t += (time.time() - t)
         example['voxels'] = voxels
         example['coordinates'] = coors
         example['num_points_per_voxel'] = num_points_per_voxel
         example['anchors_mask'] = anchors_mask
         example['points'] = points
-        self.voxelization_t += (time.time() - t)
 
         if self.training:
             gt_classes = example['annos']['gt_classes']

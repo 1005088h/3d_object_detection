@@ -118,6 +118,11 @@ class Inference:
                     anno["rotation_y"] = box_preds[:, 6]
                     anno["score"] = scores_preds
                 anno["image_idx"] = np.array([img_id] * dt_num)
+                '''
+                dt_point_table = box_np_ops.points_in_rbbox(example["points"].squeeze(), box_preds)
+                dt_point_count = dt_point_table.sum(axis=0)
+                anno["num_points"] = dt_point_count
+                '''
             annos.append(anno)
 
         return annos
