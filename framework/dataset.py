@@ -8,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from framework import augmentation as agm
 
+
 class GenericDataset(Dataset):
     def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True, augm=True):
         with open(info_path, 'rb') as f:
@@ -16,7 +17,9 @@ class GenericDataset(Dataset):
         self.num_point_features = config['num_point_features']
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
+
         self.detect_class = config['detect_class']
+
         self.detection_range = config['detection_range']
         self.grid_size = config['grid_size']
         self.training = training
@@ -27,18 +30,24 @@ class GenericDataset(Dataset):
         car_total = 0
         truck_total = 0
         bus_total = 0
+        person_total = 0
+        motorbike_total = 0
+        bicycle_total = 0
+
         car_dim = np.zeros(3)
         truck_dim = np.zeros(3)
         bus_dim = np.zeros(3)
+        person_dim = np.zeros(3)
+        motorbike_dim = np.zeros(3)
+        bicycle_dim = np.zeros(3)
 
-        H, L = [], []
         for idx, info in enumerate(self.infos):
             if len(info['annos']['name']) > 0:
-                if self.training:
-                    difficulty_mask = info['annos']["difficulty"] > 0
-                    # difficulty_mask = info['annos']["num_points"] > 5
-                    for key in info['annos']:
-                        info['annos'][key] = info['annos'][key][difficulty_mask]
+
+                difficulty_mask = info['annos']["num_points"] > 0
+                # difficulty_mask = info['annos']["difficulty"] > 5
+                for key in info['annos']:
+                    info['annos'][key] = info['annos'][key][difficulty_mask]
 
                 car_mask = info['annos']['name'] == 'car'
                 dims = info['annos']["dimensions"][car_mask]
@@ -55,19 +64,35 @@ class GenericDataset(Dataset):
                 bus_dim += np.sum(dims, axis=0)
                 bus_total += bus_mask.sum()
 
-                class_mask = car_mask | truck_mask | bus_mask
-                info['annos']['name'][class_mask] = "vehicle"
-                locs = info['annos']["location"][class_mask]
-                dims = info['annos']["dimensions"][class_mask]
-                H.append(locs[:, 2] + dims[:, 2] / 2)
-                L.append(locs[:, 2] - dims[:, 2] / 2)
+                person_mask = info['annos']['name'] == 'person'
+                dims = info['annos']["dimensions"][person_mask]
+                person_dim += np.sum(dims, axis=0)
+                person_total += person_mask.sum()
 
+                bicycle_mask = info['annos']['name'] == 'bicycle'
+                dims = info['annos']["dimensions"][bicycle_mask]
+                bicycle_dim += np.sum(dims, axis=0)
+                bicycle_total += bicycle_mask.sum()
 
-        H = np.concatenate(H)
-        L = np.concatenate(L)
-        bus_dim = bus_dim / bus_total
-        car_dim = car_dim / car_total
-        truck_dim = truck_dim / truck_total
+                motorbike_mask = info['annos']['name'] == 'motorbike'
+                dims = info['annos']["dimensions"][motorbike_mask]
+                motorbike_dim += np.sum(dims, axis=0)
+                motorbike_total += motorbike_mask.sum()
+
+                vehicle_mask = car_mask | truck_mask | bus_mask
+                info['annos']['name'][vehicle_mask] = "vehicle"
+
+                pedestrian_mask = person_mask
+                info['annos']['name'][pedestrian_mask] = "pedestrian"
+
+                cyclist_mask = bicycle_mask | motorbike_mask
+                info['annos']['name'][cyclist_mask] = "cyclist"
+        '''
+        person_dim = person_dim / person_total
+        cyclist_dim = (bicycle_dim + motorbike_dim) / (bicycle_total + motorbike_total)
+        bicycle_dim = bicycle_dim / bicycle_total
+        motorbike_dim = motorbike_dim / motorbike_total
+        '''
 
     def __len__(self):
         return len(self.infos)
@@ -104,14 +129,13 @@ class GenericDataset(Dataset):
             difficulty = annos["difficulty"][gt_class_mask]
             gt_boxes = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
 
-
             # data augmentation
             if self.augm:
-                points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
+                # points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
                 gt_boxes, points = agm.random_flip(gt_boxes, points)
                 gt_boxes, points = agm.global_rotation_v2(gt_boxes, points)
                 gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
-                gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.35, 0.35, 0.25])
+                gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.25, 0.25, 0.25])
 
             # filter range
             bv_range = self.detection_range[[0, 1, 3, 4]]
@@ -121,10 +145,10 @@ class GenericDataset(Dataset):
             gt_names = gt_names[range_mask]
             difficulty = difficulty[range_mask]
             gt_boxes[:, 6] = box_np_ops.limit_period(gt_boxes[:, 6], offset=0.5, period=2 * np.pi)
-
-            example['annos'] = {'gt_classes': gt_classes, 'gt_boxes': gt_boxes, 'difficulty': difficulty, 'gt_names': gt_names}
-
+            example['annos'] = {'gt_classes': gt_classes, 'gt_boxes': gt_boxes, 'difficulty': difficulty,
+                                'gt_names': gt_names}
             np.random.shuffle(points)
+
         self.points = points
         t = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)

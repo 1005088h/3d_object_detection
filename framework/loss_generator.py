@@ -12,7 +12,7 @@ class LossGenerator:
         self._neg_cls_weight = 1.0
         self._loss_norm_type = LossNormType.NormByNumPositives
         self._box_code_size = config['box_code_size']
-        self._num_class = len(config['detect_class'])
+        self._num_class = 1
         self.loc_loss_type = WeightedSmoothL1LocalizationLoss()
         self.cls_loss_type = SigmoidFocalClassificationLoss()
         self.dir_loss_type = WeightedSoftmaxClassificationLoss()
@@ -37,9 +37,10 @@ class LossGenerator:
         batch_size = int(box_preds.shape[0])
         box_preds = box_preds.view(batch_size, -1, self._box_code_size)
         cls_preds = cls_preds.view(batch_size, -1, self._num_class)
-        one_hot_targets = one_hot(cls_targets, depth=self._num_class + 1, dtype=box_preds.dtype)
+        one_hot_targets = one_hot(cls_targets, depth=2, dtype=box_preds.dtype)
         one_hot_targets = one_hot_targets[..., 1:]
         # sin(a - b) = sinacosb-cosasinb
+
         box_preds, reg_targets = add_sin_difference(box_preds, reg_targets)
         loc_loss = self.loc_loss_type.compute_loss(box_preds, reg_targets, weights=reg_weights)
         cls_loss = self.cls_loss_type.compute_loss(cls_preds, one_hot_targets, weights=cls_weights)
@@ -51,15 +52,14 @@ class LossGenerator:
         cls_loss_reduced = cls_loss.sum() / batch_size * self._cls_loss_weight
         loss = loc_loss_reduced + cls_loss_reduced
 
-        if self._use_direction_classifier:
-            dir_cls_targets = torch.from_numpy(example['dir_cls_targets']).cuda()
-            dir_cls_targets = one_hot(dir_cls_targets, 2)
-            dir_logits = preds_dict["dir_cls_preds"].view(batch_size, -1, 2)
-            weights = (labels > 0).type_as(dir_logits)
-            weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
-            dir_loss = self.dir_loss_type.compute_loss(dir_logits, dir_cls_targets, weights=weights)
-            dir_loss = dir_loss.sum() / batch_size
-            loss += dir_loss * self._direction_loss_weight
+        dir_cls_targets = torch.from_numpy(example['dir_cls_targets']).cuda()
+        dir_cls_targets = one_hot(dir_cls_targets, 2)
+        dir_logits = preds_dict["dir_cls_preds"].view(batch_size, -1, 2)
+        weights = (labels > 0).type_as(dir_logits)
+        weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
+        dir_loss = self.dir_loss_type.compute_loss(dir_logits, dir_cls_targets, weights=weights)
+        dir_loss = dir_loss.sum() / batch_size
+        loss += dir_loss * self._direction_loss_weight
 
         return {
             "loss": loss,
@@ -137,12 +137,12 @@ class SigmoidFocalClassificationLoss:
     def __init__(self, gamma=2.0, alpha=0.25):
         """Constructor.
 
-    Args:
-      gamma: exponent of the modulating factor (1 - p_t) ^ gamma.
-      alpha: optional alpha weighting factor to balance positives vs negatives.
-      all_zero_negative: bool. if True, will treat all zero as background.
-        else, will treat first label as background. only affect alpha.
-    """
+        Args:
+          gamma: exponent of the modulating factor (1 - p_t) ^ gamma.
+          alpha: optional alpha weighting factor to balance positives vs negatives.
+          all_zero_negative: bool. if True, will treat all zero as background.
+            else, will treat first label as background. only affect alpha.
+        """
         self._alpha = alpha
         self._gamma = gamma
 
@@ -205,17 +205,17 @@ class WeightedSoftmaxClassificationLoss:
     def compute_loss(self, prediction_tensor, target_tensor, weights):
         """Compute loss function.
 
-    Args:
-      prediction_tensor: A float tensor of shape [batch_size, num_anchors,
-        num_classes] representing the predicted logits for each class
-      target_tensor: A float tensor of shape [batch_size, num_anchors,
-        num_classes] representing one-hot encoded classification targets
-      weights: a float tensor of shape [batch_size, num_anchors]
+        Args:
+          prediction_tensor: A float tensor of shape [batch_size, num_anchors,
+            num_classes] representing the predicted logits for each class
+          target_tensor: A float tensor of shape [batch_size, num_anchors,
+            num_classes] representing one-hot encoded classification targets
+          weights: a float tensor of shape [batch_size, num_anchors]
 
-    Returns:
-      loss: a float tensor of shape [batch_size, num_anchors]
-        representing the value of the loss function.
-    """
+        Returns:
+          loss: a float tensor of shape [batch_size, num_anchors]
+            representing the value of the loss function.
+        """
         num_classes = prediction_tensor.shape[-1]
         prediction_tensor = torch.div(
             prediction_tensor, self._logit_scale)

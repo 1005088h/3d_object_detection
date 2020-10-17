@@ -212,7 +212,6 @@ def fused_compute_statistics(overlaps,
 def eval_AP(gt_annos, dt_annos, current_classes, min_overlaps):
     
     assert len(gt_annos) == len(dt_annos)
-
     rets = calculate_iou_partly(dt_annos, gt_annos)# dt vs gt overlap
     overlaps, parted_overlaps, total_dt_num, total_gt_num, split_parts = rets
     N_SAMPLE_PTS = 41
@@ -282,15 +281,16 @@ def get_mAP(prec):
         sums = sums + prec[i]
     return sums / 11 * 100
    
-def get_eval_result(gt_annos, dt_annos, class_names=['vehicle'], min_overlaps=[0.5, 0.7]):
-
-    num_points_thresh = 0
+def get_eval_result(gt_annos, dt_annos, class_names=['vehicle'], min_overlaps=[0.25, 0.5]):
+    '''
+    num_points_thresh = 5
     keys = ["name", "location", "dimensions", "rotation_y"]
     for gt_anno in gt_annos:
-        num_points_mask = gt_anno["difficulty"] > num_points_thresh
+        #num_points_mask = gt_anno["difficulty"] > num_points_thresh
+        num_points_mask = gt_anno["num_points"] > num_points_thresh
         for key in keys:
             gt_anno[key] = gt_anno[key][num_points_mask]
-
+    '''
     rets = eval_AP(gt_annos, dt_annos, class_names, min_overlaps)
     mAPs_bev = []
     for ret in rets:

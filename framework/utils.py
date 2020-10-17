@@ -1,7 +1,23 @@
 from collections import defaultdict
 import numpy as np
 import time
+import torch
 
+def example_convert_to_torch(example, dtype=torch.float32):
+    device = torch.device("cuda:0")
+    example_torch = {}
+    for k, v in example.items():
+        if k in ["voxels"]:
+            example_torch[k] = torch.as_tensor(v, dtype=dtype, device=device)
+        elif k in ["coordinates", "num_points_per_voxel"]:
+            example_torch[k] = torch.as_tensor(
+                v, dtype=torch.int32, device=device)
+        elif k in ["anchors_mask"]:
+            example_torch[k] = torch.as_tensor(
+                v, dtype=torch.bool, device=device)
+        else:
+            example_torch[k] = v
+    return example_torch
 
 def merge_second_batch(batch_list, _unused=False):
     example_merged = defaultdict(list)

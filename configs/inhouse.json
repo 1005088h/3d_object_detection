@@ -4,7 +4,7 @@
   "train_info": "/home/xy/ST/dataset/inhouse/kitti/train/data_info.pkl",
   "eval_info": "/home/xy/ST/dataset/inhouse/kitti/eval/data_info.pkl",
   "dt_info": "/home/xy/ST/dataset/inhouse/kitti/eval/dt_info.pkl",
-  "experiment": "ResNet",
+  "experiment": "multi_class",
   "batch_size": 1,
   "num_workers": 3,
   "learning_rate": 0.0005,
@@ -18,7 +18,7 @@
   "max_num_points": 15,
   "class_id": 1,
   "num_point_features": 4,
-  "detect_class": ["vehicle"],
+  "detect_class": ["vehicle", "pedestrian", "cyclist"],
   "matched_threshold": 0.60,
   "unmatched_threshold": 0.45,
   "box_code_size": 7

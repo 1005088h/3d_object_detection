@@ -9,10 +9,7 @@ class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
         super().__init__()
         self.name = 'PointNet'
-
         num_input_features += 5  # 9
-        # Need pillar (voxel) size and x/y offset in order to calculate pillar offset
-        # try to put in dataloader use numba
         self.vx = voxel_size[0]
         self.vy = voxel_size[1]
         self.x_offset = self.vx / 2 + offset[0]
@@ -20,20 +17,11 @@ class PointNet(nn.Module):
 
         # Create PillarFeatureNet layers
         in_channels = num_input_features
-        out_channels = 64
-        model = [nn.Conv1d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                 nn.InstanceNorm1d(out_channels),
+        self.out_channels = 64
+        model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
+                 nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
-
-        '''
-        model += [nn.Conv1d(out_channels, out_channels, kernel_size=1, padding=0, bias=False),
-                 nn.InstanceNorm1d(out_channels),
-                 nn.ReLU(True)]
-        '''
-
         self.pfn_layers = nn.Sequential(*model)
-
-        self.out_channels = out_channels
 
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
@@ -126,18 +114,15 @@ class RPN(nn.Module):
         num_input_filters = num_rpn_input_filters
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
-
+        self.out_plane = sum(num_upsample_filters)
         model = [nn.ZeroPad2d(1),
                  nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2),
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
         for i in range(layer_nums[0]):
-            '''
             model += [nn.Conv2d(num_filters[0], num_filters[0], 3, padding=1),
                       norm_layer(num_filters[0]),
                       nn.ReLU()]
-            '''
-            model += [Resnet(num_filters[0], norm_layer)]
         self.block1 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
@@ -150,12 +135,9 @@ class RPN(nn.Module):
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
         for i in range(layer_nums[1]):
-            '''
             model += [nn.Conv2d(num_filters[1], num_filters[1], 3, padding=1),
                       norm_layer(num_filters[1]),
                       nn.ReLU()]
-            '''
-            model += [Resnet(num_filters[1], norm_layer)]
         self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
@@ -169,12 +151,9 @@ class RPN(nn.Module):
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
         for i in range(layer_nums[2]):
-            '''
             model += [nn.Conv2d(num_filters[2], num_filters[2], 3, padding=1),
                       norm_layer(num_filters[2]),
                       nn.ReLU()]
-            '''
-            model += [Resnet(num_filters[2], norm_layer)]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
@@ -182,15 +161,6 @@ class RPN(nn.Module):
                  norm_layer(num_upsample_filters[2]),
                  nn.ReLU()]
         self.deconv3 = Sequential(*model)
-
-        num_anchor_per_loc = 2 * 3
-        num_class = 1
-        num_cls = num_anchor_per_loc * num_class
-        box_code_size = 7
-        self.conv_cls = nn.Conv2d(sum(num_upsample_filters), num_cls, 1)
-        self.conv_box = nn.Conv2d(sum(num_upsample_filters), num_anchor_per_loc * box_code_size, 1)
-        if use_direction_classifier:
-            self.conv_dir_cls = nn.Conv2d(sum(num_upsample_filters), num_anchor_per_loc * 2, 1)
 
     def forward(self, x):
         x = self.block1(x)
@@ -200,21 +170,61 @@ class RPN(nn.Module):
         x = self.block3(x)
         up3 = self.deconv3(x)
         x = torch.cat([up1, up2, up3], dim=1)
+        return x
 
-        box_preds = self.conv_box(x).permute(0, 2, 3, 1).contiguous()
-        cls_preds = self.conv_cls(x).permute(0, 2, 3, 1).contiguous()
-        
+
+class MultiHead(nn.Module):
+
+    def __init__(self, in_plane):
+        super().__init__()
+        self.box_code_size = 7
+
+        num_veh_size = 3
+        num_veh_rot = 2
+        num_veh_anchor_per_loc = num_veh_size * num_veh_rot
+        self.conv_veh_cls = nn.Conv2d(in_plane, num_veh_anchor_per_loc, 1)
+        self.conv_veh_box = nn.Conv2d(in_plane, num_veh_anchor_per_loc * self.box_code_size, 1)
+        self.conv_veh_dir = nn.Conv2d(in_plane, num_veh_anchor_per_loc * 2, 1)
+
+        num_ped_size = 1
+        num_ped_rot = 1
+        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
+        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
+        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
+        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
+
+        num_cyc_size = 1
+        num_cyc_rot = 2
+        num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
+        self.conv_cyc_cls = nn.Conv2d(in_plane, num_cyc_anchor_per_loc, 1)
+        self.conv_cyc_box = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * self.box_code_size, 1)
+        self.conv_cyc_dir = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * 2, 1)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+        veh_cls_preds = self.conv_veh_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        veh_box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        veh_dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        ped_cls_pred = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        ped_box_pred = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        ped_dir_pred = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        cyc_cls_preds = self.conv_cyc_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        cyc_box_preds = self.conv_cyc_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        cyc_dir_preds = self.conv_cyc_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        cls_preds = torch.cat((veh_cls_preds, ped_cls_pred, cyc_cls_preds), dim=1)
+        box_preds = torch.cat((veh_box_preds, ped_box_pred, cyc_box_preds), dim=1)
+        dir_cls_preds = torch.cat((veh_dir_preds, ped_dir_pred, cyc_dir_preds), dim=1)
+
         pred_dict = {
-            "box_preds": box_preds,
             "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_cls_preds": dir_cls_preds
         }
-        
-        if self._use_direction_classifier:
-            dir_cls_preds = self.conv_dir_cls(x).permute(0, 2, 3, 1).contiguous()
-            pred_dict["dir_cls_preds"] = dir_cls_preds
 
         return pred_dict
-
 
 class PointPillars(nn.Module):
 
@@ -228,13 +238,14 @@ class PointPillars(nn.Module):
                                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.inference = inference
+        self.heads = MultiHead(self.rpn.out_plane)
 
     def forward(self, example):
 
         voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"], example["coordinates"])
         spatial_features = self.middle_feature_extractor(voxel_features, example["coordinates"])
-        preds_dict = self.rpn(spatial_features)
+        rpn_feature = self.rpn(spatial_features)
+        preds_dict = self.heads(rpn_feature)
 
         return preds_dict
 

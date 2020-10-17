@@ -50,7 +50,7 @@ class PCViewer(QMainWindow):
         self.gt_boxes = None
         self.gt_names = None
         self.gt_bbox = None
-        self.classes = ['car', 'truck', 'vehicle', 'bus']
+        self.classes = ["vehicle", "pedestrian", "cyclist"]
 
         self.config_path = '../configs/inhouse.json'
         self.dataset = None
@@ -281,6 +281,7 @@ class PCViewer(QMainWindow):
             rots = detection_anno['rotation_y']
             scores = detection_anno['score']
             label = detection_anno['name']
+            #print(label)
             #num_points = detection_anno['num_points']
 
             dt_box_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
@@ -314,8 +315,8 @@ class PCViewer(QMainWindow):
                 dt_scores_text = [
                     # f'score={s:.2f}, iou={i:.2f}'
                     # for s, i in zip(label, dt_to_gt_box_iou)
-                    f'score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}'
-                    for s, x, y, iou in zip(scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou)
+                    f'label={l}, score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}'
+                    for l, s, x, y, iou in zip(label, scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou)
                 ]
             else:
                 dt_scores_text = [
@@ -340,7 +341,7 @@ class PCViewer(QMainWindow):
             #diff = self.difficulty.tolist()
 
             labels_ = [
-                "%s" % (i) for i, bx in zip(self.gt_names, self.gt_boxes)
+                "%s, %.3f" % (i, bx[6]) for i, bx in zip(self.gt_names, self.gt_boxes)
             ]
             '''
             labels_ = [

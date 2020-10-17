@@ -12,28 +12,11 @@ from framework.loss_generator import LossGenerator
 from framework.dataset import GenericDataset
 from framework.metrics import Metric
 from framework.inference import Inference
-from framework.utils import merge_second_batch, worker_init_fn
+from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
 from networks.pointpillars import PointPillars
 from framework.eval import get_eval_result
 import numpy as np
 import matplotlib.pyplot as plt
-
-
-def example_convert_to_torch(example, dtype=torch.float32):
-    device = torch.device("cuda:0")
-    example_torch = {}
-    for k, v in example.items():
-        if k in ["voxels"]:
-            example_torch[k] = torch.as_tensor(v, dtype=dtype, device=device)
-        elif k in ["coordinates", "num_points_per_voxel"]:
-            example_torch[k] = torch.as_tensor(
-                v, dtype=torch.int32, device=device)
-        elif k in ["anchors_mask"]:
-            example_torch[k] = torch.as_tensor(
-                v, dtype=torch.bool, device=device)
-        else:
-            example_torch[k] = v
-    return example_torch
 
 
 def train(config_path=None):
@@ -118,7 +101,7 @@ def train(config_path=None):
         optimizer.step()
 
         labels = example['labels']
-        cls_preds = preds_dict['cls_preds'].view(config['batch_size'], -1, len(config['detect_class']))
+        cls_preds = preds_dict['cls_preds'].view(config['batch_size'], -1, 1)
 
         metrics.update(labels, cls_preds)
         avg_loss += loss.detach().item()
@@ -196,7 +179,7 @@ def infer():
     model_path = config['model_path']
     experiment = config['experiment']
     model_path = os.path.join(model_path, experiment)
-    latest_model_path = os.path.join(model_path, '100000.pth')
+    latest_model_path = os.path.join(model_path, 'latest.pth')
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -254,7 +237,8 @@ def infer():
 
     gt_annos = [info["annos"] for info in eval_dataset.infos]
     min_overlaps = [0.5, 0.7]
-    APs, rets = get_eval_result(gt_annos, dt_annos, ['vehicle'], min_overlaps)
+    classes = ['vehicle'] #["vehicle", "pedestrian", "cyclist"]
+    APs, rets = get_eval_result(gt_annos, dt_annos, classes, min_overlaps)
     for i, (AP, ret) in enumerate(zip(APs, rets)):
         precisions = ret["precision"]
         plt.axis([0, 1, 0, 1])
@@ -264,7 +248,7 @@ def infer():
         plt.plot(recalls, precisions, label=AP_str)
         plt.xlabel('Recall')
         plt.ylabel('Precision')
-        plt.title('vehicle BEV AP@%.1f' % min_overlaps[i])
+        plt.title('vehicle BEV AP@%.2f' % min_overlaps[i])
         plt.legend()
         plt.show()
 

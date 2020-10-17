@@ -55,8 +55,8 @@ def global_scaling(gt_boxes, points, min_scale=0.95, max_scale=1.05):
     return gt_boxes, points
 
 def global_scaling_v2(gt_boxes, points, min_scale=0.85, max_scale=1.15):
-    x_scale = np.random.uniform(0.85, 1.15)
-    y_scale = np.random.uniform(0.85, 1.15)
+    x_scale = np.random.uniform(0.9, 1.1)
+    y_scale = np.random.uniform(0.9, 1.1)
     z_scale = np.random.uniform(0.95, 1.05)
     scales = np.array([x_scale, y_scale, z_scale])
     points[:, :3] *= scales

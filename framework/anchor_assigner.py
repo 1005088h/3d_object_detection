@@ -2,38 +2,85 @@ import numpy as np
 import framework.box_np_ops as box_np_ops
 import framework.box_torch_ops as box_torch_ops
 
+
 class AnchorAssigner:
     def __init__(self, config):
-        self.sizes = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
-        self._feature_map_size = np.array(config['feature_map_size'], dtype=np.float32)
-        self._anchor_strides = config['detection_range_diff'] / self._feature_map_size
-        self._anchor_offsets = config['detection_offset']
-        self._rotations = config['rotations']
-        self._class_id = config['class_id']
-        self._grid_size = config['grid_size']
-        self.box_code_size = config['box_code_size']
-        matched_threshold = config['matched_threshold']
-        unmatched_threshold = config['unmatched_threshold']
+        config['detect_class'] = ["vehicle", "pedestrian", "cyclist"] #["vehicle"]  #
+        self.detect_class = config['detect_class']
+        config["vehicle"] = {}
+        config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
+        config["vehicle"]["rotations"] = [0, 1.5707963267948966]
+        config["vehicle"]["matched_threshold"] = 0.6
+        config["vehicle"]["unmatched_threshold"] = 0.45
 
-        self.anchors = self.generate().reshape([-1, 7])
-        self.num_anchors = self.anchors.shape[0]
-        self.matched_threshold = np.full(self.num_anchors, matched_threshold, self.anchors.dtype)
-        self.unmatched_threshold = np.full(self.num_anchors, unmatched_threshold, self.anchors.dtype)
-        self.anchors_bv = box_np_ops.rbbox2d_to_near_bbox(self.anchors[:, [0, 1, 3, 4, 6]])
+        config["pedestrian"] = {}
+        config["pedestrian"]["sizes"] = [[0.96874749, 0.9645992, 1.81212425]]
+        config["pedestrian"]["rotations"] = [0]
+        config["pedestrian"]["matched_threshold"] = 0.5
+        config["pedestrian"]["unmatched_threshold"] = 0.35
+
+        config["cyclist"] = {}
+        config["cyclist"]["sizes"] = [[2.02032733, 0.98075615, 1.72027404]]
+        config["cyclist"]["rotations"] = [0, 1.5707963267948966]
+        config["cyclist"]["matched_threshold"] = 0.5
+        config["cyclist"]["unmatched_threshold"] = 0.35
+
+        self.feature_map_size = np.array(config['feature_map_size'], dtype=np.float32)
+        self.anchor_strides = config['detection_range_diff'] / self.feature_map_size
+        self.anchor_offsets = config['detection_offset']
+        self.grid_size = config['grid_size']
+        self.box_code_size = config['box_code_size']
+
+        self.anchors = []
+        self.anchors_bv = []
+        self.matched_threshold = []
+        self.unmatched_threshold = []
+        self.class_masks = {}
+        self.names = []
+
+        start_index = 0
+        for cls in self.detect_class:
+            self.sizes = config[cls]["sizes"]
+            self.rotations = config[cls]["rotations"]
+            matched_threshold = config[cls]['matched_threshold']
+            unmatched_threshold = config[cls]['unmatched_threshold']
+
+            anchors = self.generate().reshape([-1, 7])
+            anchors_bv = box_np_ops.rbbox2d_to_near_bbox(anchors[:, [0, 1, 3, 4, 6]])
+            num_anchors = anchors.shape[0]
+            matched_threshold = np.full(num_anchors, matched_threshold, anchors.dtype)
+            unmatched_threshold = np.full(num_anchors, unmatched_threshold, anchors.dtype)
+            name = np.full(num_anchors, cls)
+
+            self.anchors.append(anchors)
+            self.anchors_bv.append(anchors_bv)
+            self.matched_threshold.append(matched_threshold)
+            self.unmatched_threshold.append(unmatched_threshold)
+            self.names.append(name)
+
+            end_index = start_index + num_anchors
+            self.class_masks[cls] = [start_index, end_index]
+            start_index += num_anchors
+
+        self.anchors = np.concatenate(self.anchors)
+        self.anchors_bv = np.concatenate(self.anchors_bv)
+        self.matched_threshold = np.concatenate(self.matched_threshold)
+        self.unmatched_threshold = np.concatenate(self.unmatched_threshold)
+        self.names = np.concatenate(self.names)
 
     def generate(self):
-        x_stride, y_stride, z_stride = self._anchor_strides
-        x_offset, y_offset, z_offset = self._anchor_offsets + self._anchor_strides / 2
+        x_stride, y_stride, z_stride = self.anchor_strides
+        x_offset, y_offset, z_offset = self.anchor_offsets + self.anchor_strides / 2
 
-        x_centers = np.arange(self._feature_map_size[0], dtype=np.float32)
-        y_centers = np.arange(self._feature_map_size[1], dtype=np.float32)
-        z_centers = np.arange(self._feature_map_size[2], dtype=np.float32)
+        x_centers = np.arange(self.feature_map_size[0], dtype=np.float32)
+        y_centers = np.arange(self.feature_map_size[1], dtype=np.float32)
+        z_centers = np.arange(self.feature_map_size[2], dtype=np.float32)
 
         x_centers = x_centers * x_stride + x_offset
         y_centers = y_centers * y_stride + y_offset
         z_centers = z_centers * z_stride + z_offset
 
-        rotations = np.array(self._rotations, dtype=np.float32)
+        rotations = np.array(self.rotations, dtype=np.float32)
         sizes = np.reshape(np.array(self.sizes, dtype=np.float32), [-1, 3])
         rets = np.meshgrid(x_centers, y_centers, z_centers, rotations, indexing='ij')
         tile_shape = [1] * 5
@@ -56,69 +103,95 @@ class AnchorAssigner:
         dense_voxel_map = dense_voxel_map.cumsum(1)
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
         anchors_mask = anchors_area > 0
-        #anchors_mask = anchors_mask.astype(np.uint8)
+        # anchors_mask = anchors_mask.astype(np.uint8)
         return anchors_mask
 
-    def assign(self, gt_classes, gt_boxes, anchors_mask):
-        inds_inside = np.where(anchors_mask)[0]
-        anchors = self.anchors[inds_inside, :]
-        matched_threshold = self.matched_threshold[inds_inside]
-        unmatched_threshold = self.unmatched_threshold[inds_inside]
-        num_inside = len(inds_inside)
+    def assign(self, gt_classes_all, gt_boxes_all, anchors_mask_all):
+        label_list = []
+        bbox_targets_list = []
+        bbox_outside_weights_list = []
+        dir_cls_targets_list = []
+        for cls, index in self.class_masks.items():
+            current_class = self.detect_class.index(cls) + 1
+            mask = gt_classes_all == current_class
+            gt_classes = gt_classes_all[mask]
+            gt_boxes = gt_boxes_all[mask]
+            anchors = self.anchors[index[0]: index[1]]
+            anchors_mask = anchors_mask_all[index[0]: index[1]]
+            matched_threshold = self.matched_threshold[index[0]: index[1]]
+            unmatched_threshold = self.unmatched_threshold[index[0]: index[1]]
+            num_anchors = anchors.shape[0]
 
-        labels = -np.ones((num_inside,), dtype=np.int32)
-        bbox_targets = np.zeros((num_inside, self.box_code_size), dtype=self.anchors.dtype)
+            inds_inside = np.where(anchors_mask)[0]
+            anchors = anchors[inds_inside, :]
+            matched_threshold = matched_threshold[inds_inside]
+            unmatched_threshold = unmatched_threshold[inds_inside]
+            num_inside = len(inds_inside)
 
-        if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            # Compute overlaps between the anchors and the gt boxes overlaps
-            anchor_by_gt_overlap = similarity_fn(anchors, gt_boxes)
-            # Map from anchor to gt box that has highest overlap
-            anchor_to_gt_argmax = anchor_by_gt_overlap.argmax(axis=1)
-            # For each anchor, amount of overlap with most overlapping gt box
-            anchor_to_gt_max = anchor_by_gt_overlap[np.arange(num_inside), anchor_to_gt_argmax]
-            # Map from gt box to an anchor that has highest overlap
-            gt_to_anchor_argmax = anchor_by_gt_overlap.argmax(axis=0)
-            # For each gt box, amount of overlap with most overlapping anchor
-            gt_to_anchor_max = anchor_by_gt_overlap[gt_to_anchor_argmax, np.arange(anchor_by_gt_overlap.shape[1])]
-            # must remove gt which doesn't match any anchor.
-            empty_gt_mask = gt_to_anchor_max == 0
-            gt_to_anchor_max[empty_gt_mask] = -1
-            # Find all anchors that share the max overlap amount
-            # (this includes many ties)
-            anchors_with_max_overlap = np.where(anchor_by_gt_overlap == gt_to_anchor_max)[0]
-            # Fg label: for each gt use anchors with highest overlap
-            # (including ties)
-            gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
-            labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+            labels = -np.ones((num_inside,), dtype=np.int32)  # bg: 0, pos: >0
+            bbox_targets = np.zeros((num_inside, self.box_code_size), dtype=self.anchors.dtype)
 
-            # Fg label: above threshold IOU
-            pos_inds = anchor_to_gt_max >= matched_threshold
-            gt_inds = anchor_to_gt_argmax[pos_inds]
-            labels[pos_inds] = gt_classes[gt_inds]
+            if len(gt_boxes) > 0 and anchors.shape[0] > 0:
+                # Compute overlaps between the anchors and the gt boxes overlaps
+                anchor_by_gt_overlap = similarity_fn(anchors, gt_boxes)
+                # Map from anchor to gt box that has highest overlap
+                anchor_to_gt_argmax = anchor_by_gt_overlap.argmax(axis=1)
+                # For each anchor, amount of overlap with most overlapping gt box
+                anchor_to_gt_max = anchor_by_gt_overlap[np.arange(num_inside), anchor_to_gt_argmax]
+                # Map from gt box to an anchor that has highest overlap
+                gt_to_anchor_argmax = anchor_by_gt_overlap.argmax(axis=0)
+                # For each gt box, amount of overlap with most overlapping anchor
+                gt_to_anchor_max = anchor_by_gt_overlap[gt_to_anchor_argmax, np.arange(anchor_by_gt_overlap.shape[1])]
+                # must remove gt which doesn't match any anchor.
+                empty_gt_mask = gt_to_anchor_max == 0
+                gt_to_anchor_max[empty_gt_mask] = -1
+                # Find all anchors that share the max overlap amount
+                # (this includes many ties)
+                anchors_with_max_overlap = np.where(anchor_by_gt_overlap == gt_to_anchor_max)[0]
+                # Fg label: for each gt use anchors with highest overlap
+                # (including ties)
+                gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
+                labels[anchors_with_max_overlap] = 1#gt_classes[gt_inds_force]
 
-            # Bg label: below threshold IOU
-            bg_inds = np.where(anchor_to_gt_max < unmatched_threshold)[0]
-            labels[bg_inds] = 0
+                # Fg label: above threshold IOU
+                pos_inds = anchor_to_gt_max >= matched_threshold
+                gt_inds = anchor_to_gt_argmax[pos_inds]
+                labels[pos_inds] = 1 #gt_classes[gt_inds]
 
-            # Re-assign max overlap gt if all below threshold IOU
-            labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
 
-            fg_inds = np.where(labels > 0)[0]
-            bbox_targets[fg_inds, :] = box_np_ops.box_encode(gt_boxes[anchor_to_gt_argmax[fg_inds], :],
-                                                             anchors[fg_inds, :])
-        else:
-            labels[:] = 0
+                # Bg label: below threshold IOU
+                bg_inds = np.where(anchor_to_gt_max < unmatched_threshold)[0]
+                labels[bg_inds] = 0
 
-        bbox_outside_weights = np.zeros((num_inside,), dtype=self.anchors.dtype)
-        bbox_outside_weights[labels > 0] = 1.0
+                # Re-assign max overlap gt if all below threshold IOU
+                labels[anchors_with_max_overlap] = 1#gt_classes[gt_inds_force]
 
-        dir_cls_targets = None
-        # Map up to original set of anchors
-        if inds_inside is not None:
-            labels = unmap(labels, self.num_anchors, inds_inside, fill=-1)
-            bbox_targets = unmap(bbox_targets, self.num_anchors, inds_inside, fill=0)
-            bbox_outside_weights = unmap(bbox_outside_weights, self.num_anchors, inds_inside, fill=0)
-            dir_cls_targets = get_direction_target(self.anchors, bbox_targets)
+                fg_inds = np.where(labels > 0)[0]
+                bbox_targets[fg_inds, :] = box_np_ops.box_encode(gt_boxes[anchor_to_gt_argmax[fg_inds], :],
+                                                                 anchors[fg_inds, :])
+            else:
+                labels[:] = 0
+
+            bbox_outside_weights = np.zeros((num_inside,), dtype=self.anchors.dtype)
+            bbox_outside_weights[labels > 0] = 1.0
+
+            dir_cls_targets = None
+            # Map up to original set of anchors
+            if inds_inside is not None:
+                labels = unmap(labels, num_anchors, inds_inside, fill=-1)
+                bbox_targets = unmap(bbox_targets, num_anchors, inds_inside, fill=0)
+                bbox_outside_weights = unmap(bbox_outside_weights, num_anchors, inds_inside, fill=0)
+                dir_cls_targets = get_direction_target(self.anchors[index[0]: index[1]], bbox_targets)
+
+            label_list.append(labels)
+            bbox_targets_list.append(bbox_targets)
+            bbox_outside_weights_list.append(bbox_outside_weights)
+            dir_cls_targets_list.append(dir_cls_targets)
+
+        labels = np.concatenate(label_list)
+        bbox_targets = np.concatenate(bbox_targets_list)
+        bbox_outside_weights = np.concatenate(bbox_outside_weights_list)
+        dir_cls_targets = np.concatenate(dir_cls_targets_list)
 
         return labels, bbox_targets, bbox_outside_weights, dir_cls_targets
 
@@ -153,3 +226,68 @@ def get_direction_target(anchors, reg_targets):
     rot_gt = reg_targets[..., -1] + anchors[..., -1]
     dir_cls_targets = rot_gt > 0
     return dir_cls_targets.astype('int32')
+
+
+'''
+inds_inside = np.where(anchors_mask)[0]
+anchors = self.anchors[inds_inside, :]
+matched_threshold = self.matched_threshold[inds_inside]
+unmatched_threshold = self.unmatched_threshold[inds_inside]
+num_inside = len(inds_inside)
+
+labels = -np.ones((num_inside,), dtype=np.int32)
+bbox_targets = np.zeros((num_inside, self.box_code_size), dtype=self.anchors.dtype)
+
+if len(gt_boxes) > 0 and anchors.shape[0] > 0:
+    # Compute overlaps between the anchors and the gt boxes overlaps
+    anchor_by_gt_overlap = similarity_fn(anchors, gt_boxes)
+    # Map from anchor to gt box that has highest overlap
+    anchor_to_gt_argmax = anchor_by_gt_overlap.argmax(axis=1)
+    # For each anchor, amount of overlap with most overlapping gt box
+    anchor_to_gt_max = anchor_by_gt_overlap[np.arange(num_inside), anchor_to_gt_argmax]
+    # Map from gt box to an anchor that has highest overlap
+    gt_to_anchor_argmax = anchor_by_gt_overlap.argmax(axis=0)
+    # For each gt box, amount of overlap with most overlapping anchor
+    gt_to_anchor_max = anchor_by_gt_overlap[gt_to_anchor_argmax, np.arange(anchor_by_gt_overlap.shape[1])]
+    # must remove gt which doesn't match any anchor.
+    empty_gt_mask = gt_to_anchor_max == 0
+    gt_to_anchor_max[empty_gt_mask] = -1
+    # Find all anchors that share the max overlap amount
+    # (this includes many ties)
+    anchors_with_max_overlap = np.where(anchor_by_gt_overlap == gt_to_anchor_max)[0]
+    # Fg label: for each gt use anchors with highest overlap
+    # (including ties)
+    gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
+    labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+
+    # Fg label: above threshold IOU
+    pos_inds = anchor_to_gt_max >= matched_threshold
+    gt_inds = anchor_to_gt_argmax[pos_inds]
+    labels[pos_inds] = gt_classes[gt_inds]
+
+    # Bg label: below threshold IOU
+    bg_inds = np.where(anchor_to_gt_max < unmatched_threshold)[0]
+    labels[bg_inds] = 0
+
+    # Re-assign max overlap gt if all below threshold IOU
+    labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+
+    fg_inds = np.where(labels > 0)[0]
+    bbox_targets[fg_inds, :] = box_np_ops.box_encode(gt_boxes[anchor_to_gt_argmax[fg_inds], :],
+                                                     anchors[fg_inds, :])
+else:
+    labels[:] = 0
+
+bbox_outside_weights = np.zeros((num_inside,), dtype=self.anchors.dtype)
+bbox_outside_weights[labels > 0] = 1.0
+
+dir_cls_targets = None
+# Map up to original set of anchors
+if inds_inside is not None:
+    labels = unmap(labels, self.num_anchors, inds_inside, fill=-1)
+    bbox_targets = unmap(bbox_targets, self.num_anchors, inds_inside, fill=0)
+    bbox_outside_weights = unmap(bbox_outside_weights, self.num_anchors, inds_inside, fill=0)
+    dir_cls_targets = get_direction_target(self.anchors, bbox_targets)
+
+return labels, bbox_targets, bbox_outside_weights, dir_cls_targets
+'''
