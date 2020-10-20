@@ -43,9 +43,7 @@ class GenericDataset(Dataset):
 
         for idx, info in enumerate(self.infos):
             if len(info['annos']['name']) > 0:
-
                 difficulty_mask = info['annos']["num_points"] > 0
-                # difficulty_mask = info['annos']["difficulty"] > 5
                 for key in info['annos']:
                     info['annos'][key] = info['annos'][key][difficulty_mask]
 
@@ -88,6 +86,10 @@ class GenericDataset(Dataset):
                 cyclist_mask = bicycle_mask | motorbike_mask
                 info['annos']['name'][cyclist_mask] = "cyclist"
         '''
+        self.veh_total = car_total + truck_total + person_total
+        self.ped_total = person_total
+        self.cyc_total = bicycle_total + motorbike_total
+        
         person_dim = person_dim / person_total
         cyclist_dim = (bicycle_dim + motorbike_dim) / (bicycle_total + motorbike_total)
         bicycle_dim = bicycle_dim / bicycle_total

@@ -1,8 +1,11 @@
+import copy
 import json
 from pathlib import Path
 from framework import box_np_ops
 import numpy as np
 from shapely.geometry import Polygon
+
+
 class Settings:
     def __init__(self, cfg_path):
 
@@ -35,8 +38,8 @@ class Settings:
     def load(self, path):
         with open(self._cfg_path, 'r') as f:
             self._settings = json.loads(f.read())
-            
- 
+
+
 def riou3d_shapely(rbboxes1, rbboxes2):
     N, K = rbboxes1.shape[0], rbboxes2.shape[0]
     corners1 = box_np_ops.center_to_corner_box2d(
@@ -48,7 +51,7 @@ def riou3d_shapely(rbboxes1, rbboxes2):
         for j in range(K):
             iw = (min(rbboxes1[i, 2] + rbboxes1[i, 5],
                       rbboxes2[j, 2] + rbboxes2[j, 5]) - max(
-                          rbboxes1[i, 2], rbboxes2[j, 2]))
+                rbboxes1[i, 2], rbboxes2[j, 2]))
             if iw > 0:
                 p1 = Polygon(corners1[i])
                 p2 = Polygon(corners2[j])
@@ -63,7 +66,6 @@ def riou3d_shapely(rbboxes1, rbboxes2):
 
 
 def kitti_anno_to_corners(info, annos=None):
-
     rect = info['calib/R0_rect']
     P2 = info['calib/P2']
     Tr_velo_to_cam = info['calib/Tr_velo_to_cam']
@@ -90,13 +92,9 @@ def kitti_anno_to_corners(info, annos=None):
 
 def remove_low_score(detection_anno, thresh):
     img_filtered_annotations = {}
+    score_mask = detection_anno['score'] >= thresh
 
-    relevant_annotation_indices = [
-        i for i, s in enumerate(detection_anno['score']) if s >= thresh
-    ]
     for key in detection_anno.keys():
         if len(detection_anno[key]) > 0:
-            img_filtered_annotations[key] = detection_anno[key][relevant_annotation_indices]
-        else:
-            img_filtered_annotations = detection_anno
+            img_filtered_annotations[key] = detection_anno[key][score_mask]
     return img_filtered_annotations

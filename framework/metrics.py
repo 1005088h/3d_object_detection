@@ -12,23 +12,24 @@ class Metric:
         self.prec_total = torch.zeros(num)
 
     def update(self, labels, preds, weights=None):
-        scores = torch.sigmoid(preds.cuda())
-        scores = torch.max(scores, dim=-1)[0]
-        labels = torch.from_numpy(labels).cuda()
-        if weights is None:
-            weights = (labels != -1).float()
-        else:
-            weights = weights.float()
-        for i, thresh in enumerate(self._thresholds):
-            tp, tn, fp, fn = _calc_binary_metrics(labels, scores, weights, thresh)
-            rec_count = tp + fn
-            prec_count = tp + fp
-            if rec_count > 0:
-                self.rec_count[i] += rec_count
-                self.rec_total[i] += tp
-            if prec_count > 0:
-                self.prec_count[i] += prec_count
-                self.prec_total[i] += tp
+        with torch.no_grad():
+            scores = torch.sigmoid(preds.cuda())
+            scores = torch.max(scores, dim=-1)[0]
+            labels = torch.from_numpy(labels).cuda()
+            if weights is None:
+                weights = (labels != -1).float()
+            else:
+                weights = weights.float()
+            for i, thresh in enumerate(self._thresholds):
+                tp, tn, fp, fn = _calc_binary_metrics(labels, scores, weights, thresh)
+                rec_count = tp + fn
+                prec_count = tp + fp
+                if rec_count > 0:
+                    self.rec_count[i] += rec_count
+                    self.rec_total[i] += tp
+                if prec_count > 0:
+                    self.prec_count[i] += prec_count
+                    self.prec_total[i] += tp
 
     def __str__(self):
         str = ""

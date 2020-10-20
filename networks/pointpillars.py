@@ -172,6 +172,37 @@ class RPN(nn.Module):
         x = torch.cat([up1, up2, up3], dim=1)
         return x
 
+class SingleHead(nn.Module):
+
+    def __init__(self, in_plane):
+        super().__init__()
+        self.box_code_size = 7
+
+        num_ped_size = 1
+        num_ped_rot = 1
+        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
+        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
+        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
+        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+
+        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        cls_preds =  ped_cls_preds
+        box_preds =  ped_box_preds
+        dir_cls_preds = ped_dir_preds
+
+        pred_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_cls_preds": dir_cls_preds
+        }
+
+        return pred_dict
 
 class MultiHead(nn.Module):
 
@@ -206,17 +237,17 @@ class MultiHead(nn.Module):
         veh_box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
         veh_dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
 
-        ped_cls_pred = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        ped_box_pred = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        ped_dir_pred = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
 
         cyc_cls_preds = self.conv_cyc_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
         cyc_box_preds = self.conv_cyc_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
         cyc_dir_preds = self.conv_cyc_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
 
-        cls_preds = torch.cat((veh_cls_preds, ped_cls_pred, cyc_cls_preds), dim=1)
-        box_preds = torch.cat((veh_box_preds, ped_box_pred, cyc_box_preds), dim=1)
-        dir_cls_preds = torch.cat((veh_dir_preds, ped_dir_pred, cyc_dir_preds), dim=1)
+        cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
+        box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
+        dir_cls_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
 
         pred_dict = {
             "cls_preds": cls_preds,
@@ -238,8 +269,8 @@ class PointPillars(nn.Module):
                                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.heads = MultiHead(self.rpn.out_plane)
-
+        #self.heads = MultiHead(self.rpn.out_plane)
+        self.heads = SingleHead(self.rpn.out_plane)
     def forward(self, example):
 
         voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"], example["coordinates"])

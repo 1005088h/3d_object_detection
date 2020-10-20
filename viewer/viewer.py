@@ -55,8 +55,10 @@ class PCViewer(QMainWindow):
         self.config_path = '../configs/inhouse.json'
         self.dataset = None
         self.anchors = None
+        self.augm = False
         self.plot_anchors = False
         self.plot_voxel = False
+
 
     def build_dataset(self, info_path=None):
 
@@ -64,7 +66,7 @@ class PCViewer(QMainWindow):
             config = json.load(f)
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
-        dataset = GenericDataset(config, info_path, voxel_generator, anchor_assigner, training=True, augm=False)
+        dataset = GenericDataset(config, info_path, voxel_generator, anchor_assigner, training=True, augm=self.augm)
         return dataset
 
     def init_ui(self):
@@ -281,7 +283,6 @@ class PCViewer(QMainWindow):
             rots = detection_anno['rotation_y']
             scores = detection_anno['score']
             label = detection_anno['name']
-            #print(label)
             #num_points = detection_anno['num_points']
 
             dt_box_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
@@ -293,12 +294,13 @@ class PCViewer(QMainWindow):
                 axis=2)
 
             if self.gt_boxes is not None:
+                '''
                 iou_3d = riou3d_shapely(self.gt_boxes, dt_box_lidar)
                 if iou_3d.shape[0] != 0:
                     dt_to_gt_box_3diou = iou_3d.max(0)
                 else:
                     dt_to_gt_box_3diou = np.zeros([0, 0])
-
+                '''
                 iou_2d = bev_box_overlap(dt_box_lidar[:, [0, 1, 3, 4, 6]], self.gt_boxes[:, [0, 1, 3, 4, 6]])
                 if iou_2d.shape[0] != 0:
                     dt_to_gt_box_iou = iou_2d.max(1)
@@ -311,12 +313,13 @@ class PCViewer(QMainWindow):
             dt_boxes_corners_cam_p2 = box_np_ops.project_to_image(dt_boxes_corners_cam, P2)
             dt_boxes_corners_cam_p2 = dt_boxes_corners_cam_p2.reshape([-1, 8, 2])
             '''
+            print(len(label), len(scores),len(dt_box_lidar),len(dt_to_gt_box_iou))
             if self.gt_boxes is not None and len(self.gt_boxes) > 0:
                 dt_scores_text = [
                     # f'score={s:.2f}, iou={i:.2f}'
                     # for s, i in zip(label, dt_to_gt_box_iou)
                     f'label={l}, score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}'
-                    for l, s, x, y, iou in zip(label, scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou)
+                    for i, (l, s, x, y, iou) in enumerate(zip(label, scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou))
                 ]
             else:
                 dt_scores_text = [

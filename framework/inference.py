@@ -9,7 +9,6 @@ import time
 class Inference:
     def __init__(self, config, anchor_assigner):
         self.anchors = torch.from_numpy(anchor_assigner.anchors).cuda()
-        self.names = anchor_assigner.names
         self._nms_pre_max_size = 1000
         self._nms_post_max_size = 300
         self._nms_iou_threshold = 0.1
@@ -19,7 +18,9 @@ class Inference:
         self._nms_score_threshold = 0.05
         self.center_limit = config['center_limit']
         self.detect_class = np.array(config['detect_class'])
-
+        self.class_masks = anchor_assigner.class_masks
+        #for cls, arange in self.class_masks.items():
+        #    self.class_masks[cls] = torch.tensor(arange).cuda()
 
     def infer(self, example, preds_dict):
         annos = []
@@ -39,81 +40,94 @@ class Inference:
 
         image_idx = example["image_idx"]
 
-        for box_preds, cls_preds, dir_preds, a_mask, img_id in zip(
+        for box_preds_all, cls_preds_all, dir_preds_all, a_mask_all, img_id in zip(
                 batch_box_preds, batch_cls_preds, batch_dir_preds, batch_anchors_mask, image_idx
         ):
-            box_preds = box_preds[a_mask]
-            cls_preds = cls_preds[a_mask]
-            dir_preds = dir_preds[a_mask]
-            name_preds = self.names[a_mask.cpu()]
+            name_list, location_list, dimensions_list, rotation_y_list, score_list = [], [], [], [], []
+            for cls, a_range in self.class_masks.items():
+                #a_range = torch.tensor(a_range).cuda()
+                a_mask = a_mask_all[a_range[0]: a_range[1]]
+                box_preds = box_preds_all[a_range[0]: a_range[1]]
+                cls_preds = cls_preds_all[a_range[0]: a_range[1]]
+                dir_preds = dir_preds_all[a_range[0]: a_range[1]]
 
-            cls_scores = torch.sigmoid(cls_preds)
-            #top_scores, top_labels = torch.max(cls_scores, dim=-1)
-            top_scores = torch.max(cls_scores, dim=-1)[0]
-            dir_labels = torch.max(dir_preds, dim=-1)[1]
-            thresh = torch.tensor([self._nms_score_threshold], device=top_scores.device).type_as(top_scores)
-            selected = None
-            top_scores_keep = top_scores >= thresh
-            if top_scores_keep.any():
-                top_scores = top_scores[top_scores_keep]
-                box_preds = box_preds[top_scores_keep]
-                name_preds = name_preds[top_scores_keep.cpu()]
+                ## Anchor mask
+                box_preds = box_preds[a_mask]
+                cls_preds = cls_preds[a_mask]
+                dir_preds = dir_preds[a_mask]
 
-                #if self._use_direction_classifier:
-                dir_labels = dir_labels[top_scores_keep]
-                #top_labels = top_labels[top_scores_keep]
+                cls_scores = torch.sigmoid(cls_preds)
+                top_scores = torch.max(cls_scores, dim=-1)[0]
+                dir_labels = torch.max(dir_preds, dim=-1)[1]
 
-                boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
-                box_preds_corners = box_torch_ops.center_to_corner_box2d(
-                    boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
-                boxes_for_nms = box_torch_ops.corner_to_standup_nd(box_preds_corners)
+                thresh = torch.tensor([self._nms_score_threshold], device=top_scores.device).type_as(top_scores)
+                selected = None
 
-                selected = nms(
-                    boxes_for_nms,
-                    top_scores,
-                    pre_max_size=self._nms_pre_max_size,
-                    post_max_size=self._nms_post_max_size,
-                    iou_threshold=self._nms_iou_threshold,
-                )
+                ## Score mask
+                top_scores_keep = top_scores >= thresh
+                if top_scores_keep.any():
+                    top_scores = top_scores[top_scores_keep]
+                    box_preds = box_preds[top_scores_keep]
+                    # if self._use_direction_classifier:
+                    dir_labels = dir_labels[top_scores_keep]
+
+                    boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
+                    box_preds_corners = box_torch_ops.center_to_corner_box2d(
+                        boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
+                    boxes_for_nms = box_torch_ops.corner_to_standup_nd(box_preds_corners)
+
+                    selected = nms(
+                        boxes_for_nms,
+                        top_scores,
+                        pre_max_size=self._nms_pre_max_size,
+                        post_max_size=self._nms_post_max_size,
+                        iou_threshold=self._nms_iou_threshold,
+                    )
+
+                if selected is not None:
+                    ## NMS mask
+                    box_preds = box_preds[selected]
+                    scores_preds = top_scores[selected]
+                    #name_inds = name_inds[selected]
+                    if self._use_direction_classifier:
+                        dir_preds = dir_labels[selected].bool()
+                        dir_mask = (box_preds[..., -1] > 0)
+                        opp_labels = dir_mask ^ dir_preds
+                        box_preds[..., -1] += torch.where(
+                            opp_labels,
+                            torch.tensor(np.pi).type_as(box_preds),
+                            torch.tensor(0.0).type_as(box_preds))
+
+                    scores_preds = scores_preds.detach().cpu().numpy()
+                    box_preds = box_preds.detach().cpu().numpy()
+
+                    limit_range = self.center_limit
+                    min_mask = np.any(box_preds[:, :3] > limit_range[:3], axis=1)
+                    max_mask = np.any(box_preds[:, 3:6] < limit_range[3:], axis=1)
+                    range_mask = min_mask & max_mask
+
+                    ## Range mask
+                    box_preds = box_preds[range_mask]
+                    box_preds[..., -1] = box_np_ops.limit_period(box_preds[..., -1], period=2 * np.pi)
+                    scores_preds = scores_preds[range_mask]
+
+                    dt_num = box_preds.shape[0]
+                    if dt_num > 0:
+                        name_list.append(np.full(dt_num, cls, dtype='<U10'))
+                        location_list.append(box_preds[:, :3])
+                        dimensions_list.append(box_preds[:, 3:6])
+                        rotation_y_list.append(box_preds[:, 6])
+                        score_list.append(scores_preds)
 
             anno = get_start_result_anno()
-            if selected is not None:
-                box_preds = box_preds[selected]
-                #labels_preds = top_labels[selected]
-                scores_preds = top_scores[selected]
-                name_preds = name_preds[selected.cpu()]
-                if self._use_direction_classifier:
-                    dir_preds = dir_labels[selected].bool()
-                    dir_mask = (box_preds[..., -1] > 0)
-                    opp_labels = dir_mask ^ dir_preds
-                    box_preds[..., -1] += torch.where(
-                        opp_labels,
-                        torch.tensor(np.pi).type_as(box_preds),
-                        torch.tensor(0.0).type_as(box_preds))
+            if len(name_list) > 0:
+                anno["name"] = np.concatenate(name_list)
+                anno["location"] = np.concatenate(location_list)
+                anno["dimensions"] = np.concatenate(dimensions_list)
+                anno["rotation_y"] = np.concatenate(rotation_y_list)
+                anno["score"] = np.concatenate(score_list)
 
-                scores_preds = scores_preds.detach().cpu().numpy()
-                box_preds = box_preds.detach().cpu().numpy()
-                #label_preds = labels_preds.detach().cpu().numpy()
-
-                limit_range = self.center_limit
-                min_mask = np.any(box_preds[:, :3] > limit_range[:3], axis=1)
-                max_mask = np.any(box_preds[:, 3:6] < limit_range[3:], axis=1)
-                range_mask = min_mask & max_mask
-
-                box_preds = box_preds[range_mask]
-                box_preds[..., -1] = box_np_ops.limit_period(box_preds[..., -1], period=2 * np.pi)
-                #label_preds = label_preds[range_mask]
-                scores_preds = scores_preds[range_mask]
-                name_preds = name_preds[range_mask]
-
-                dt_num = box_preds.shape[0]
-                if dt_num > 0:
-                    anno["name"] = name_preds#self.detect_class[label_preds]
-                    anno["location"] = box_preds[:, :3]
-                    anno["dimensions"] = box_preds[:, 3:6]
-                    anno["rotation_y"] = box_preds[:, 6]
-                    anno["score"] = scores_preds
-                anno["image_idx"] = np.array([img_id] * dt_num)
+            #anno["image_idx"] = np.array([img_id] * dt_num)
             annos.append(anno)
         return annos
 
@@ -158,3 +172,116 @@ def nms(bboxes,
         return indices[keep]
     else:
         return torch.from_numpy(keep).long().cuda()
+
+
+'''
+class Inference:
+    def __init__(self, config, anchor_assigner):
+        self.anchors = torch.from_numpy(anchor_assigner.anchors).cuda()
+        self.anchor_index = torch.from_numpy(np.arange(anchor_assigner.anchors.shape[0])).cuda()
+        self.names = anchor_assigner.names
+        self._nms_pre_max_size = 900
+        self._nms_post_max_size = 300
+        self._nms_iou_threshold = 0.1
+        self._box_code_size = 7
+        self._num_class = 1
+        self._use_direction_classifier = True
+        self._nms_score_threshold = 0.05
+        self.center_limit = config['center_limit']
+        self.detect_class = np.array(config['detect_class'])
+
+    def infer(self, example, preds_dict):
+        annos = []
+        batch_box_preds = preds_dict["box_preds"]
+        batch_cls_preds = preds_dict["cls_preds"]
+        batch_size = batch_box_preds.shape[0]
+
+        batch_box_preds = batch_box_preds.view(batch_size, -1, self._box_code_size)
+        batch_cls_preds = batch_cls_preds.view(batch_size, -1, self._num_class)
+
+        batch_anchors = torch.stack([self.anchors] * batch_size)
+        batch_box_preds = box_torch_ops.box_decode(batch_box_preds, batch_anchors)
+
+        batch_anchors_mask = example["anchors_mask"]
+        batch_dir_preds = preds_dict["dir_cls_preds"]
+        batch_dir_preds = batch_dir_preds.view(batch_size, -1, 2)
+
+        image_idx = example["image_idx"]
+
+        for box_preds, cls_preds, dir_preds, a_mask, img_id in zip(
+                batch_box_preds, batch_cls_preds, batch_dir_preds, batch_anchors_mask, image_idx
+        ):
+            ## Anchor mask
+            box_preds = box_preds[a_mask]
+            cls_preds = cls_preds[a_mask]
+            dir_preds = dir_preds[a_mask]
+            name_inds = self.anchor_index[a_mask]
+
+            cls_scores = torch.sigmoid(cls_preds)
+            top_scores = torch.max(cls_scores, dim=-1)[0]
+            dir_labels = torch.max(dir_preds, dim=-1)[1]
+            thresh = torch.tensor([self._nms_score_threshold], device=top_scores.device).type_as(top_scores)
+            selected = None
+
+            ## Score mask
+            top_scores_keep = top_scores >= thresh
+            if top_scores_keep.any():
+                top_scores = top_scores[top_scores_keep]
+                box_preds = box_preds[top_scores_keep]
+                name_inds = name_inds[top_scores_keep]
+                # if self._use_direction_classifier:
+                dir_labels = dir_labels[top_scores_keep]
+
+                boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
+                box_preds_corners = box_torch_ops.center_to_corner_box2d(
+                    boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
+                boxes_for_nms = box_torch_ops.corner_to_standup_nd(box_preds_corners)
+
+                selected = nms(
+                    boxes_for_nms,
+                    top_scores,
+                    pre_max_size=self._nms_pre_max_size,
+                    post_max_size=self._nms_post_max_size,
+                    iou_threshold=self._nms_iou_threshold,
+                )
+
+            anno = get_start_result_anno()
+            if selected is not None:
+                ## NMS mask
+                box_preds = box_preds[selected]
+                scores_preds = top_scores[selected]
+                name_inds = name_inds[selected]
+                if self._use_direction_classifier:
+                    dir_preds = dir_labels[selected].bool()
+                    dir_mask = (box_preds[..., -1] > 0)
+                    opp_labels = dir_mask ^ dir_preds
+                    box_preds[..., -1] += torch.where(
+                        opp_labels,
+                        torch.tensor(np.pi).type_as(box_preds),
+                        torch.tensor(0.0).type_as(box_preds))
+
+                scores_preds = scores_preds.detach().cpu().numpy()
+                box_preds = box_preds.detach().cpu().numpy()
+                name_inds = name_inds.cpu().numpy()
+
+                limit_range = self.center_limit
+                min_mask = np.any(box_preds[:, :3] > limit_range[:3], axis=1)
+                max_mask = np.any(box_preds[:, 3:6] < limit_range[3:], axis=1)
+                range_mask = min_mask & max_mask
+                ## Range mask
+                box_preds = box_preds[range_mask]
+                box_preds[..., -1] = box_np_ops.limit_period(box_preds[..., -1], period=2 * np.pi)
+                scores_preds = scores_preds[range_mask]
+                name_inds = name_inds[range_mask]
+
+                dt_num = box_preds.shape[0]
+                if dt_num > 0:
+                    anno["name"] = self.names[name_inds]
+                    anno["location"] = box_preds[:, :3]
+                    anno["dimensions"] = box_preds[:, 3:6]
+                    anno["rotation_y"] = box_preds[:, 6]
+                    anno["score"] = scores_preds
+                anno["image_idx"] = np.array([img_id] * dt_num)
+            annos.append(anno)
+        return annos
+'''

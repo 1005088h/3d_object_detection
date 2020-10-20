@@ -5,7 +5,7 @@ import framework.box_torch_ops as box_torch_ops
 
 class AnchorAssigner:
     def __init__(self, config):
-        config['detect_class'] = ["vehicle", "pedestrian", "cyclist"] #["vehicle"]  #
+        config['detect_class'] = ["pedestrian"]  #["vehicle", "pedestrian", "cyclist"]#
         self.detect_class = config['detect_class']
         config["vehicle"] = {}
         config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
@@ -16,14 +16,14 @@ class AnchorAssigner:
         config["pedestrian"] = {}
         config["pedestrian"]["sizes"] = [[0.96874749, 0.9645992, 1.81212425]]
         config["pedestrian"]["rotations"] = [0]
-        config["pedestrian"]["matched_threshold"] = 0.5
-        config["pedestrian"]["unmatched_threshold"] = 0.35
+        config["pedestrian"]["matched_threshold"] = 0.3
+        config["pedestrian"]["unmatched_threshold"] = 0.15
 
         config["cyclist"] = {}
         config["cyclist"]["sizes"] = [[2.02032733, 0.98075615, 1.72027404]]
         config["cyclist"]["rotations"] = [0, 1.5707963267948966]
-        config["cyclist"]["matched_threshold"] = 0.5
-        config["cyclist"]["unmatched_threshold"] = 0.35
+        config["cyclist"]["matched_threshold"] = 0.45
+        config["cyclist"]["unmatched_threshold"] = 0.25
 
         self.feature_map_size = np.array(config['feature_map_size'], dtype=np.float32)
         self.anchor_strides = config['detection_range_diff'] / self.feature_map_size
@@ -36,7 +36,9 @@ class AnchorAssigner:
         self.matched_threshold = []
         self.unmatched_threshold = []
         self.class_masks = {}
-        self.names = []
+        #self.names = []
+
+        #self.class_anchor = {}
 
         start_index = 0
         for cls in self.detect_class:
@@ -50,23 +52,24 @@ class AnchorAssigner:
             num_anchors = anchors.shape[0]
             matched_threshold = np.full(num_anchors, matched_threshold, anchors.dtype)
             unmatched_threshold = np.full(num_anchors, unmatched_threshold, anchors.dtype)
-            name = np.full(num_anchors, cls)
+            #name = np.full(num_anchors, cls)
 
             self.anchors.append(anchors)
             self.anchors_bv.append(anchors_bv)
             self.matched_threshold.append(matched_threshold)
             self.unmatched_threshold.append(unmatched_threshold)
-            self.names.append(name)
+            #self.names.append(name)
 
             end_index = start_index + num_anchors
             self.class_masks[cls] = [start_index, end_index]
+            #self.class_anchor[cls] = 0
             start_index += num_anchors
 
         self.anchors = np.concatenate(self.anchors)
         self.anchors_bv = np.concatenate(self.anchors_bv)
         self.matched_threshold = np.concatenate(self.matched_threshold)
         self.unmatched_threshold = np.concatenate(self.unmatched_threshold)
-        self.names = np.concatenate(self.names)
+        #self.names = np.concatenate(self.names)
 
     def generate(self):
         x_stride, y_stride, z_stride = self.anchor_strides
@@ -114,7 +117,7 @@ class AnchorAssigner:
         for cls, index in self.class_masks.items():
             current_class = self.detect_class.index(cls) + 1
             mask = gt_classes_all == current_class
-            gt_classes = gt_classes_all[mask]
+            #gt_classes = gt_classes_all[mask]
             gt_boxes = gt_boxes_all[mask]
             anchors = self.anchors[index[0]: index[1]]
             anchors_mask = anchors_mask_all[index[0]: index[1]]
@@ -158,7 +161,6 @@ class AnchorAssigner:
                 gt_inds = anchor_to_gt_argmax[pos_inds]
                 labels[pos_inds] = 1 #gt_classes[gt_inds]
 
-
                 # Bg label: below threshold IOU
                 bg_inds = np.where(anchor_to_gt_max < unmatched_threshold)[0]
                 labels[bg_inds] = 0
@@ -171,6 +173,8 @@ class AnchorAssigner:
                                                                  anchors[fg_inds, :])
             else:
                 labels[:] = 0
+
+            #self.class_anchor[cls] += np.sum(labels > 0)
 
             bbox_outside_weights = np.zeros((num_inside,), dtype=self.anchors.dtype)
             bbox_outside_weights[labels > 0] = 1.0

@@ -14,10 +14,9 @@ from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
 from networks.pointpillars import PointPillars
-from framework.eval import get_eval_result
 import numpy as np
 import matplotlib.pyplot as plt
-
+from eval.eval import get_official_eval_result
 
 def train(config_path=None):
     with open('configs/inhouse.json', 'r') as f:
@@ -31,7 +30,7 @@ def train(config_path=None):
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -141,13 +140,14 @@ def train(config_path=None):
                 dt_annos += inference.infer(example, preds_dict)
             t = (time.time() - t) / len(eval_dataloader)
             print('\nTime for each frame: %f\n' % t)
-            min_overlaps = [0.5, 0.7]
+
             gt_annos = copy.deepcopy(eval_annos)
-            APs, rets = get_eval_result(gt_annos, dt_annos, ['vehicle'], min_overlaps)
-            log_str = 'Step: %d' % step
-            for i, (AP, ret) in enumerate(zip(APs, rets)):
-                log_str += ', AP@%.1f: %.5f' % (min_overlaps[i], AP)
-            log_str += '\n'
+
+            eval_classes = ["pedestrian"] #["vehicle", "pedestrian", "cyclist"]
+            APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
+            print(eval_str)
+
+            log_str = 'Step: %d\n%s' % (step, eval_str)
             print(log_str)
             with open(log_file, 'a+') as f:
                 f.write(log_str)
@@ -163,7 +163,7 @@ def infer():
     anchor_assigner = AnchorAssigner(config)
     inference = Inference(config, anchor_assigner)
 
-    eval_dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=False)
+    eval_dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=False, augm=False)
     eval_dataloader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config['batch_size'],
@@ -173,13 +173,14 @@ def infer():
         drop_last=True,
         collate_fn=merge_second_batch)
 
+    print(len(eval_dataset))
     net = PointPillars(config)
     net.cuda()
 
     model_path = config['model_path']
     experiment = config['experiment']
     model_path = os.path.join(model_path, experiment)
-    latest_model_path = os.path.join(model_path, 'latest.pth')
+    latest_model_path = os.path.join(model_path, '160000.pth')
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -203,7 +204,8 @@ def infer():
             # print(d_t)
 
             t = time.time()
-            preds_dict = net(example)
+            with torch.no_grad():
+                preds_dict = net(example)
             torch.cuda.synchronize()
             d_t = time.time() - t
             network_t += d_t
@@ -231,14 +233,21 @@ def infer():
     print("toGPU_t : %.5f" % toGPU_t)
     print("network_t : %.5f" % network_t)
     print("post_t : %.5f" % post_t)
-
+    '''
+    cls_anchor = anchor_assigner.class_anchor
+    veh_anchor = cls_anchor['vehicle'] / eval_dataset.veh_total
+    ped_anchor = cls_anchor['pedestrian'] / eval_dataset.ped_total
+    cyc_anchor = cls_anchor['cyclist'] / eval_dataset.cyc_total
+    print(veh_anchor, ped_anchor, cyc_anchor)
+    '''
     with open(config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
-
     gt_annos = [info["annos"] for info in eval_dataset.infos]
-    min_overlaps = [0.5, 0.7]
-    classes = ['vehicle'] #["vehicle", "pedestrian", "cyclist"]
-    APs, rets = get_eval_result(gt_annos, dt_annos, classes, min_overlaps)
+    eval_classes = ["pedestrian"]  # ["vehicle", "pedestrian", "cyclist"]
+    APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
+    print(eval_str)
+    '''
+    APs, rets = get_eval_result(gt_annos, dt_annos, eval_classes, min_overlaps)
     for i, (AP, ret) in enumerate(zip(APs, rets)):
         precisions = ret["precision"]
         plt.axis([0, 1, 0, 1])
@@ -251,7 +260,7 @@ def infer():
         plt.title('vehicle BEV AP@%.2f' % min_overlaps[i])
         plt.legend()
         plt.show()
-
+    '''
 
 if __name__ == "__main__":
     train()
