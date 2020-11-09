@@ -6,7 +6,7 @@
   "dt_info": "dt_info.pkl",
   "experiment": "ntu_sl",
   "batch_size": 1,
-  "num_workers": 4,
+  "num_workers": 3,
   "learning_rate": 0.0005,
   "rotations": [0, 1.5707963267948966],
   "anchor_sizes": [5.58029948, 2.28423087, 2.13696706],

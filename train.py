@@ -146,7 +146,7 @@ def train(config_path=None):
 
             gt_annos = copy.deepcopy(eval_annos)
 
-            eval_classes = ["pedestrian"] #["vehicle", "pedestrian", "cyclist"]
+            eval_classes = ["vehicle", "pedestrian", "cyclist"] #["vehicle", "pedestrian", "cyclist"]
             APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
             log_str = 'Step: %d\n%s' % (step, eval_str)
             print(log_str)
@@ -233,7 +233,11 @@ def infer():
     print("network_t : %.5f" % network_t)
     print("post_t : %.5f" % post_t)
 
-    with open(config['dt_info'], 'wb') as f:
+    dt_path = Path(config['data_root']) / config['experiment']
+    if not os.path.exists(dt_path):
+        os.makedirs(dt_path)
+
+    with open(dt_path / config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
     gt_annos = [info["annos"] for info in eval_dataset.infos]
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
