@@ -16,6 +16,7 @@ from framework.utils import merge_second_batch, worker_init_fn, example_convert_
 from networks.pointpillars import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 from eval.eval import get_official_eval_result
 
 def train(config_path=None):
@@ -57,9 +58,8 @@ def train(config_path=None):
     optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
     step_num = 0
 
-    model_path = config['model_path']
-    experiment = config['experiment']
-    model_path = os.path.join(model_path, experiment)
+    model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
+
     latest_model_path = os.path.join(model_path, 'latest.pth')
     log_file = os.path.join(model_path, 'log.txt')
     if not os.path.exists(model_path):
@@ -178,10 +178,8 @@ def infer():
     net = PointPillars(config)
     net.cuda()
 
-    model_path = config['model_path']
-    experiment = config['experiment']
-    model_path = os.path.join(model_path, experiment)
-    latest_model_path = os.path.join(model_path, 'latest.pth')
+    model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
+    latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -238,7 +236,7 @@ def infer():
     with open(config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
     gt_annos = [info["annos"] for info in eval_dataset.infos]
-    eval_classes = ["pedestrian"]  # ["vehicle", "pedestrian", "cyclist"]
+    eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
     '''
@@ -257,5 +255,5 @@ def infer():
     '''
 
 if __name__ == "__main__":
-    #train()
-    infer()
+    train()
+    #infer()

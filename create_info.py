@@ -5,29 +5,32 @@ import fire
 import os
 from framework import box_np_ops
 import copy
-data_path = '/home/xy/ST/dataset/inhouse/kitti/eval' #000294
-#data_path = '/home/xy/ST/dataset/inhouse/kitti/train' #003258
+
+data_root = '/home/xy/ST/dataset/inhouse/'
+dataset = 'ntu'
+split = 'eval'
+relative_path = os.path.join(dataset, split)
+info_path = os.path.join(data_root, relative_path)
+
+#data_path = '/home/xy/ST/dataset/inhouse/soonlee/eval' #000294
+#data_path = '/home/xy/ST/dataset/inhouse/soonlee/train' #003258
 waymo = False
 waymo_idx = [0, 1, 2, 3, 5, 6, 7]
 
 
-def create_info(data_path=data_path, save_path=None, train_eval=True):
-
-    if save_path is None:
-        save_path = data_path
-        
-    filename = os.path.join(save_path, 'data_info.pkl')
+def create_info(info_path, train_eval=True):
+    filename = os.path.join(info_path, 'data_info.pkl')
     
-    images_path = 'image_2'
-    points_path = 'velodyne'
-    calib_path = 'calib'
-    label_path = 'label_2'
+    images_path = os.path.join(relative_path, 'image_2')
+    points_path = os.path.join(relative_path, 'velodyne')
+    calib_path = os.path.join(relative_path, 'calib')
+    label_path = os.path.join(relative_path, 'label_2')
     
     if waymo:
         images_path = os.path.join(data_path, 'image_0')
         label_path = os.path.join(data_path, 'label_all')
     
-    images = os.listdir(os.path.join(data_path, images_path))
+    images = os.listdir(os.path.join(data_root, images_path))
     ids = [os.path.splitext(img)[0] for img in images]
     ids.sort()
     
@@ -39,7 +42,7 @@ def create_info(data_path=data_path, save_path=None, train_eval=True):
         print('image_idx', id)
         image_info = {'image_idx': int(id), 'pointcloud_num_features': 4}
         image_info['img_path'] = os.path.join(images_path, id + '.jpg')
-        image_info['img_shape'] = np.array(io.imread( os.path.join(data_path, image_info['img_path']) ).shape[:2], dtype=np.int32)
+        image_info['img_shape'] = np.array(io.imread(os.path.join(data_root, image_info['img_path']) ).shape[:2], dtype=np.int32)
         image_info['velodyne_path'] = os.path.join(points_path, id + '.bin')
         
         image_info['calib/P0'] = None
@@ -50,7 +53,7 @@ def create_info(data_path=data_path, save_path=None, train_eval=True):
         image_info['calib/Tr_velo_to_cam'] = None
         
         if calib:
-            calib_file = os.path.join(data_path, calib_path, id + '.txt')
+            calib_file = os.path.join(data_root, calib_path, id + '.txt')
             with open(calib_file, 'r') as f:
                 lines = f.readlines()
                 if waymo:
@@ -88,7 +91,7 @@ def create_info(data_path=data_path, save_path=None, train_eval=True):
             image_info['calib/Tr_imu_to_velo'] = Tr_imu_to_velo
             
         if train_eval:
-            label_file = os.path.join(data_path, label_path, id + '.txt')
+            label_file = os.path.join(data_root, label_path, id + '.txt')
             image_info['annos'] = get_label_anno(label_file, rect_4x4, Tr_velo_to_cam)
             add_difficulty_to_annos_v2(image_info)
             
@@ -144,7 +147,7 @@ def get_label_anno(label_path, r_rect, velo2cam):
 def add_difficulty_to_annos_v2(info):
     v_path = info['velodyne_path']
     num_features = info['pointcloud_num_features']
-    points = np.fromfile(os.path.join(data_path, v_path), dtype=np.float32, count=-1).reshape([-1, num_features])
+    points = np.fromfile(os.path.join(data_root, v_path), dtype=np.float32, count=-1).reshape([-1, num_features])
     
     annos = info['annos']
     dims = annos['dimensions']  # lwh format
@@ -215,6 +218,6 @@ def _extend_matrix(mat):
         
 if __name__ == '__main__':
    
-    create_info()
+    create_info(info_path)
     #fire.Fire()       
          

@@ -10,10 +10,14 @@ from framework import augmentation as agm
 
 
 class GenericDataset(Dataset):
-    def __init__(self, config, info_path, voxel_generator, anchor_assigner, training=True, augm=True):
-        with open(info_path, 'rb') as f:
-            self.infos = pickle.load(f)
-        self.root_dir = Path(info_path).parent
+    def __init__(self, config, info_paths, voxel_generator, anchor_assigner, training=True, augm=True):
+        self.data_root = config['data_root']
+        self.infos = []
+        for info_path in info_paths:
+            info_path = Path(self.data_root) / info_path
+            with open(info_path, 'rb') as f:
+                self.infos += pickle.load(f)
+        self.root_dir = Path(info_paths[0]).parent.parent.parent
         self.num_point_features = config['num_point_features']
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
@@ -36,6 +40,7 @@ class GenericDataset(Dataset):
 
         for idx, info in enumerate(self.infos):
             if len(info['annos']['name']) > 0:
+
                 difficulty_mask = info['annos']["num_points"] > 0
                 for key in info['annos']:
                     info['annos'][key] = info['annos'][key][difficulty_mask]
@@ -66,6 +71,10 @@ class GenericDataset(Dataset):
 
                 cyclist_mask = bicycle_mask | motorbike_mask
                 info['annos']['name'][cyclist_mask] = "cyclist"
+
+        vehicle_total = car_total + truck_total + bus_total
+        pedestrian_total = person_total
+        cyclist_total = bicycle_total + motorbike_total
 
     def __len__(self):
         return len(self.infos)

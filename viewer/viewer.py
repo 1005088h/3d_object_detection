@@ -56,7 +56,7 @@ class PCViewer(QMainWindow):
         self.dataset = None
         self.anchors = None
         self.augm = False
-        self.plot_anchors = True
+        self.plot_anchors = False
         self.plot_voxel = False
 
 
@@ -163,10 +163,7 @@ class PCViewer(QMainWindow):
         self.show()
 
     def on_loadButtonPressed(self):
-        info_path = self.w_info_path.text()
-        if not os.path.exists(info_path):
-            self.error("ERROR: info file not exist")
-            return
+        info_path = [self.w_info_path.text()]
         self.dataset = self.build_dataset(info_path)
         self.log("load", len(self.dataset), "infos.")
         self.json_setting.set("latest_info_path", str(info_path))
