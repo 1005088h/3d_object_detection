@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import framework.box_np_ops as box_np_ops
 import framework.box_torch_ops as box_torch_ops
@@ -5,7 +7,7 @@ import framework.box_torch_ops as box_torch_ops
 
 class AnchorAssigner:
     def __init__(self, config):
-        config['detect_class'] = ["pedestrian"]  #["vehicle", "pedestrian", "cyclist"]#
+        config['detect_class'] = ["vehicle", "pedestrian", "cyclist"] # vehicle, pedestrian, cyclist
         self.detect_class = config['detect_class']
         config["vehicle"] = {}
         config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
@@ -16,13 +18,13 @@ class AnchorAssigner:
         config["pedestrian"] = {}
         config["pedestrian"]["sizes"] = [[0.96874749, 0.9645992, 1.81212425]]
         config["pedestrian"]["rotations"] = [0]
-        config["pedestrian"]["matched_threshold"] = 0.3
-        config["pedestrian"]["unmatched_threshold"] = 0.15
+        config["pedestrian"]["matched_threshold"] = 0.45
+        config["pedestrian"]["unmatched_threshold"] = 0.25
 
         config["cyclist"] = {}
         config["cyclist"]["sizes"] = [[2.02032733, 0.98075615, 1.72027404]]
         config["cyclist"]["rotations"] = [0, 1.5707963267948966]
-        config["cyclist"]["matched_threshold"] = 0.45
+        config["cyclist"]["matched_threshold"] = 0.5
         config["cyclist"]["unmatched_threshold"] = 0.25
 
         self.feature_map_size = np.array(config['feature_map_size'], dtype=np.float32)
@@ -74,7 +76,10 @@ class AnchorAssigner:
     def generate(self):
         x_stride, y_stride, z_stride = self.anchor_strides
         x_offset, y_offset, z_offset = self.anchor_offsets + self.anchor_strides / 2
-
+        z_offset = 0
+        for s in self.sizes:
+            z_offset += s[2]
+        z_offset = z_offset / len(self.sizes)
         x_centers = np.arange(self.feature_map_size[0], dtype=np.float32)
         y_centers = np.arange(self.feature_map_size[1], dtype=np.float32)
         z_centers = np.arange(self.feature_map_size[2], dtype=np.float32)
@@ -101,10 +106,16 @@ class AnchorAssigner:
 
     def create_mask(self, coors, grid_size, voxel_size, offset):
         anchors_bv = self.anchors_bv
+
         dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
+
         dense_voxel_map = dense_voxel_map.cumsum(0)
         dense_voxel_map = dense_voxel_map.cumsum(1)
+        #anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
+        #t = time.time()
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
+        #t = time.time() - t
+        #print(t)
         anchors_mask = anchors_area > 0
         # anchors_mask = anchors_mask.astype(np.uint8)
         return anchors_mask

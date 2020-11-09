@@ -81,6 +81,7 @@ def train(config_path=None):
 
     data_iter = iter(train_dataloader)
     avg_time = time.time()
+    scaler = torch.cuda.amp.GradScaler()
     for step in range(step_num + 1, 10000000):
         epoch = (step * config['batch_size']) // len(train_dataset) + 1
         try:
@@ -92,13 +93,15 @@ def train(config_path=None):
 
         optimizer.zero_grad()
         example = example_convert_to_torch(example)
-        preds_dict = net(example)
+        with torch.cuda.amp.autocast():
+            preds_dict = net(example)
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
-        optimizer.step()
+        scaler.scale(loss).backward() #loss.backward()
 
+        #torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
+        scaler.step(optimizer) #optimizer.step()
+        scaler.update()
         labels = example['labels']
         cls_preds = preds_dict['cls_preds'].view(config['batch_size'], -1, 1)
 
@@ -145,8 +148,6 @@ def train(config_path=None):
 
             eval_classes = ["pedestrian"] #["vehicle", "pedestrian", "cyclist"]
             APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
-            print(eval_str)
-
             log_str = 'Step: %d\n%s' % (step, eval_str)
             print(log_str)
             with open(log_file, 'a+') as f:
@@ -180,7 +181,7 @@ def infer():
     model_path = config['model_path']
     experiment = config['experiment']
     model_path = os.path.join(model_path, experiment)
-    latest_model_path = os.path.join(model_path, '160000.pth')
+    latest_model_path = os.path.join(model_path, 'latest.pth')
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -233,13 +234,7 @@ def infer():
     print("toGPU_t : %.5f" % toGPU_t)
     print("network_t : %.5f" % network_t)
     print("post_t : %.5f" % post_t)
-    '''
-    cls_anchor = anchor_assigner.class_anchor
-    veh_anchor = cls_anchor['vehicle'] / eval_dataset.veh_total
-    ped_anchor = cls_anchor['pedestrian'] / eval_dataset.ped_total
-    cyc_anchor = cls_anchor['cyclist'] / eval_dataset.cyc_total
-    print(veh_anchor, ped_anchor, cyc_anchor)
-    '''
+
     with open(config['dt_info'], 'wb') as f:
         pickle.dump(dt_annos, f)
     gt_annos = [info["annos"] for info in eval_dataset.infos]
@@ -247,8 +242,7 @@ def infer():
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
     '''
-    APs, rets = get_eval_result(gt_annos, dt_annos, eval_classes, min_overlaps)
-    for i, (AP, ret) in enumerate(zip(APs, rets)):
+    for i, AP in APs):
         precisions = ret["precision"]
         plt.axis([0, 1, 0, 1])
         recalls = np.linspace(0.0, 1.0, num=41)
@@ -263,5 +257,5 @@ def infer():
     '''
 
 if __name__ == "__main__":
-    train()
-    #infer()
+    #train()
+    infer()

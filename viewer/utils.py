@@ -91,7 +91,7 @@ def kitti_anno_to_corners(info, annos=None):
 
 
 def remove_low_score(detection_anno, thresh):
-    img_filtered_annotations = {}
+    img_filtered_annotations = detection_anno
     score_mask = detection_anno['score'] >= thresh
 
     for key in detection_anno.keys():

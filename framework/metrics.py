@@ -6,10 +6,10 @@ class Metric:
     def __init__(self):
         self._thresholds = [0.1, 0.3, 0.5, 0.7]
         num = len(self._thresholds)
-        self.rec_count = torch.zeros(num)
-        self.rec_total = torch.zeros(num)
-        self.prec_count = torch.zeros(num)
-        self.prec_total = torch.zeros(num)
+        self.rec_count = torch.zeros(num).cuda()
+        self.rec_total = torch.zeros(num).cuda()
+        self.prec_count = torch.zeros(num).cuda()
+        self.prec_total = torch.zeros(num).cuda()
 
     def update(self, labels, preds, weights=None):
         with torch.no_grad():

@@ -22,7 +22,7 @@ from bbox_plot import GLColor
 import json
 
 from framework import box_np_ops
-from framework.eval import bev_box_overlap
+from eval.eval import bev_box_overlap
 from utils import remove_low_score
 from views import MatPlotLibView, KittiDrawControl, KittiPointCloudView
 from utils import Settings, riou3d_shapely
@@ -56,7 +56,7 @@ class PCViewer(QMainWindow):
         self.dataset = None
         self.anchors = None
         self.augm = False
-        self.plot_anchors = False
+        self.plot_anchors = True
         self.plot_voxel = False
 
 
@@ -277,12 +277,13 @@ class PCViewer(QMainWindow):
         dt_box_color = self.w_config.get("DTBoxColor")[:3]
         dt_box_color = (*dt_box_color, self.w_config.get("DTBoxAlpha"))
         detection_anno = remove_low_score(detection_anno, self.w_config.get("DTScoreThreshold"))
-        if len(detection_anno['score']) > 0:
+        if detection_anno is not None and detection_anno['score'].shape[0] > 0:
             dims = detection_anno['dimensions']
             loc = detection_anno['location']
             rots = detection_anno['rotation_y']
             scores = detection_anno['score']
             label = detection_anno['name']
+
             #num_points = detection_anno['num_points']
 
             dt_box_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
@@ -293,7 +294,7 @@ class PCViewer(QMainWindow):
                 origin=[0.5, 0.5, 0.5],
                 axis=2)
 
-            if self.gt_boxes is not None:
+            if self.gt_boxes is not None and self.gt_boxes.shape[0] > 0:
                 '''
                 iou_3d = riou3d_shapely(self.gt_boxes, dt_box_lidar)
                 if iou_3d.shape[0] != 0:
@@ -313,8 +314,8 @@ class PCViewer(QMainWindow):
             dt_boxes_corners_cam_p2 = box_np_ops.project_to_image(dt_boxes_corners_cam, P2)
             dt_boxes_corners_cam_p2 = dt_boxes_corners_cam_p2.reshape([-1, 8, 2])
             '''
-            print(len(label), len(scores),len(dt_box_lidar),len(dt_to_gt_box_iou))
-            if self.gt_boxes is not None and len(self.gt_boxes) > 0:
+            #print(len(label), len(scores),len(dt_box_lidar),len(dt_to_gt_box_iou))
+            if self.gt_boxes is not None and self.gt_boxes.shape[0] > 0:
                 dt_scores_text = [
                     # f'score={s:.2f}, iou={i:.2f}'
                     # for s, i in zip(label, dt_to_gt_box_iou)

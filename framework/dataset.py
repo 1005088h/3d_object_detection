@@ -34,13 +34,6 @@ class GenericDataset(Dataset):
         motorbike_total = 0
         bicycle_total = 0
 
-        car_dim = np.zeros(3)
-        truck_dim = np.zeros(3)
-        bus_dim = np.zeros(3)
-        person_dim = np.zeros(3)
-        motorbike_dim = np.zeros(3)
-        bicycle_dim = np.zeros(3)
-
         for idx, info in enumerate(self.infos):
             if len(info['annos']['name']) > 0:
                 difficulty_mask = info['annos']["num_points"] > 0
@@ -48,33 +41,21 @@ class GenericDataset(Dataset):
                     info['annos'][key] = info['annos'][key][difficulty_mask]
 
                 car_mask = info['annos']['name'] == 'car'
-                dims = info['annos']["dimensions"][car_mask]
-                car_dim += np.sum(dims, axis=0)
                 car_total += car_mask.sum()
 
                 truck_mask = info['annos']['name'] == 'truck'
-                dims = info['annos']["dimensions"][truck_mask]
-                truck_dim += np.sum(dims, axis=0)
                 truck_total += truck_mask.sum()
 
                 bus_mask = info['annos']['name'] == 'bus'
-                dims = info['annos']["dimensions"][bus_mask]
-                bus_dim += np.sum(dims, axis=0)
                 bus_total += bus_mask.sum()
 
                 person_mask = info['annos']['name'] == 'person'
-                dims = info['annos']["dimensions"][person_mask]
-                person_dim += np.sum(dims, axis=0)
                 person_total += person_mask.sum()
 
                 bicycle_mask = info['annos']['name'] == 'bicycle'
-                dims = info['annos']["dimensions"][bicycle_mask]
-                bicycle_dim += np.sum(dims, axis=0)
                 bicycle_total += bicycle_mask.sum()
 
                 motorbike_mask = info['annos']['name'] == 'motorbike'
-                dims = info['annos']["dimensions"][motorbike_mask]
-                motorbike_dim += np.sum(dims, axis=0)
                 motorbike_total += motorbike_mask.sum()
 
                 vehicle_mask = car_mask | truck_mask | bus_mask
@@ -85,16 +66,6 @@ class GenericDataset(Dataset):
 
                 cyclist_mask = bicycle_mask | motorbike_mask
                 info['annos']['name'][cyclist_mask] = "cyclist"
-        '''
-        self.veh_total = car_total + truck_total + person_total
-        self.ped_total = person_total
-        self.cyc_total = bicycle_total + motorbike_total
-        
-        person_dim = person_dim / person_total
-        cyclist_dim = (bicycle_dim + motorbike_dim) / (bicycle_total + motorbike_total)
-        bicycle_dim = bicycle_dim / bicycle_total
-        motorbike_dim = motorbike_dim / motorbike_total
-        '''
 
     def __len__(self):
         return len(self.infos)
@@ -136,7 +107,7 @@ class GenericDataset(Dataset):
                 # points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
                 gt_boxes, points = agm.random_flip(gt_boxes, points)
                 gt_boxes, points = agm.global_rotation_v2(gt_boxes, points)
-                gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
+                # gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
                 gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.25, 0.25, 0.25])
 
             # filter range
@@ -155,19 +126,6 @@ class GenericDataset(Dataset):
         t = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
 
-        '''
-        v_points = []
-        for i, (v, p) in enumerate(zip(voxels, num_points_per_voxel)):
-            v_points.append(v[:p])
-        example['v_points'] = v_points
-        
-        v_points = np.concatenate(v_points)
-        count = 0
-        for num in num_points_per_voxel:
-            if num < 10:
-                count += 1
-        print(count / len(num_points_per_voxel))
-        '''
         grid_size = self.grid_size
         voxel_size = self.voxel_generator.voxel_size
         offset = self.voxel_generator.offset

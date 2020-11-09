@@ -18,7 +18,7 @@ def filter_gt_box_outside_range(gt_boxes, limit_range):
     return np.any(ret.reshape(-1, 4), axis=1)
 
 
-@numba.jit
+#@numba.jit(forceobj=True) Numba not helpful for this function
 def points_in_convex_polygon_jit(points, polygon, clockwise=True):
     """check points is in 2d convex polygons. True when point in polygon
     Args:

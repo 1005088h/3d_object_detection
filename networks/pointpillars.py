@@ -269,8 +269,8 @@ class PointPillars(nn.Module):
                                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        #self.heads = MultiHead(self.rpn.out_plane)
-        self.heads = SingleHead(self.rpn.out_plane)
+        self.heads = MultiHead(self.rpn.out_plane)
+        # self.heads = SingleHead(self.rpn.out_plane)
     def forward(self, example):
 
         voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"], example["coordinates"])
