@@ -183,7 +183,7 @@ class GenericDataset(Dataset):
             raise StopIteration
 
 
-class InferData():
+class InferData:
     def __init__(self, config, voxel_generator, anchor_assigner, dtype=torch.float32):
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner

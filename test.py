@@ -22,8 +22,7 @@ if __name__ == '__main__':
     model = PointPillars(config)
     state_dict = torch.load(MODEL_PATH)
     model.load_state_dict(state_dict['model_state_dict'])
-    model.to(torch.device("cuda:0")).half().eval()
-
+    model.to(torch.device("cuda:0")).half().eval() # remove half() if torch.float16 not working 
 
     pts = np.load('/home/xy/ST/object3d_det/pts.npy')
     points = pts[:,:4]
