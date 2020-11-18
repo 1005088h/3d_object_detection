@@ -443,12 +443,13 @@ def get_official_eval_result(gt_annos, dt_annos, class_names):
                     'pedestrian': [0.5, 0.25],
                     'cyclist':    [0.5, 0.25]}
 
-    metrics = ['bev']           # bev, 3d
+    metrics = ['bev', '3d']           # bev, 3d
     frame = 'lidar'             # lidar, camera
     num_point_threshold = 5     # 0, 5, 10
     results = []
+    eval_str = ''
     for metric in metrics:
-        eval_str = '#### Metric: %s, num_points > %d\n' % (metric, num_point_threshold)
+        eval_str += '\n#### Metric: %s, num_points > %d\n' % (metric, num_point_threshold)
         ret = eval_class_AP(gt_annos, dt_annos, class_names, metric, min_overlaps, frame, num_point_threshold)
         mAP = get_mAP(ret['precision'])
         results.append(mAP)

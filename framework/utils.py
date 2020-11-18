@@ -31,14 +31,17 @@ def merge_second_batch(batch_list, _unused=False):
         elif key == 'match_indices_num':
             ret[key] = np.concatenate(elems, axis=0)
         elif key == 'coordinates':
-            coors = []
-            for i, coor in enumerate(elems):
-                coor_pad = np.pad(
-                    coor, ((0, 0), (1, 0)),
-                    mode='constant',
-                    constant_values=i)
-                coors.append(coor_pad)
-            ret[key] = np.concatenate(coors, axis=0)
+            if len(batch_list) > 1:
+                coors = []
+                for i, coor in enumerate(elems):
+                    coor_pad = np.pad(
+                        coor, ((0, 0), (0, 1)),
+                        mode='constant',
+                        constant_values=i)
+                    coors.append(coor_pad)
+                ret[key] = np.concatenate(coors, axis=0)
+            else:
+                ret[key] = np.concatenate(elems, axis=0)
         else:
             ret[key] = np.stack(elems, axis=0)
     return ret

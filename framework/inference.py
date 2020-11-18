@@ -38,10 +38,8 @@ class Inference:
         batch_dir_preds = preds_dict["dir_cls_preds"]
         batch_dir_preds = batch_dir_preds.view(batch_size, -1, 2)
 
-        image_idx = example["image_idx"]
-
-        for box_preds_all, cls_preds_all, dir_preds_all, a_mask_all, img_id in zip(
-                batch_box_preds, batch_cls_preds, batch_dir_preds, batch_anchors_mask, image_idx
+        for box_preds_all, cls_preds_all, dir_preds_all, a_mask_all in zip(
+                batch_box_preds, batch_cls_preds, batch_dir_preds, batch_anchors_mask
         ):
             name_list, location_list, dimensions_list, rotation_y_list, score_list = [], [], [], [], []
             for cls, a_range in self.class_masks.items():

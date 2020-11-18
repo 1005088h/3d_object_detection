@@ -7,10 +7,12 @@ import time
 from pathlib import Path
 import matplotlib.pyplot as plt
 from framework import augmentation as agm
+from framework.utils import example_convert_to_torch
 
 
 class GenericDataset(Dataset):
     def __init__(self, config, info_paths, voxel_generator, anchor_assigner, training=True, augm=True):
+
         self.data_root = Path(config['data_root'])
         self.infos = []
         for info_path in info_paths:
@@ -115,7 +117,7 @@ class GenericDataset(Dataset):
                 # points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
                 gt_boxes, points = agm.random_flip(gt_boxes, points)
                 gt_boxes, points = agm.global_rotation_v2(gt_boxes, points)
-                # gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
+                gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)
                 gt_boxes, points = agm.global_translate(gt_boxes, points, noise_translate_std=[0.25, 0.25, 0.25])
 
             # filter range
@@ -157,4 +159,43 @@ class GenericDataset(Dataset):
             example['dir_cls_targets'] = dir_cls_targets
             example['bbox_outside_weights'] = bbox_outside_weights
 
+        return example
+
+    def __iter__(self):
+        self.n = 0
+        return self
+
+    def __next__(self):
+        if self.n < len(self.infos):
+            info = self.infos[self.n]
+            v_path = self.data_root / info['velodyne_path']
+            points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self.num_point_features])
+            voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
+            grid_size = self.grid_size
+            voxel_size = self.voxel_generator.voxel_size
+            offset = self.voxel_generator.offset
+            anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset)
+            example = {'voxels': voxels, 'coordinates': coors, 'num_points_per_voxel': num_points_per_voxel,
+                       'anchors_mask': anchors_mask}
+            self.n += 1
+            return example
+        else:
+            raise StopIteration
+
+
+class InferData():
+    def __init__(self, config, voxel_generator, anchor_assigner, dtype=torch.float32):
+        self.voxel_generator = voxel_generator
+        self.anchor_assigner = anchor_assigner
+        self.grid_size = config['grid_size']
+        self.dtype = dtype
+
+    def get(self, points):
+        voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
+        anchors_mask = self.anchor_assigner.create_mask(coors, self.grid_size, self.voxel_generator.voxel_size,
+                                                        self.voxel_generator.offset)
+        anchors_mask = anchors_mask[np.newaxis, :]
+        example = {'voxels': voxels, 'coordinates': coors, 'num_points_per_voxel': num_points_per_voxel,
+                   'anchors_mask': anchors_mask}
+        example = example_convert_to_torch(example, self.dtype)
         return example

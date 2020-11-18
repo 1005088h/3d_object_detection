@@ -29,10 +29,10 @@ class PointNet(nn.Module):
         f_cluster = voxels[:, :, :3] - points_mean
 
         # Find distance of x, y, and z from pillar center
-        # coors [Batch X Y Z]
+        # coors [X Y Z Batch]
         f_center = torch.zeros_like(voxels[:, :, :2])
-        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 1].float().unsqueeze(1) * self.vx + self.x_offset)
-        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 2].float().unsqueeze(1) * self.vy + self.y_offset)
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
 
         # Combine together feature decorations
         features_ls = [voxels, f_cluster, f_center]
@@ -80,12 +80,17 @@ class PointPillarsScatter(nn.Module):
                                  device=voxel_features.device)
 
             # Only include non-empty pillars
+            if self.batch_size > 1:
+                batch_mask = coords[:, 3] == batch_itt
+                this_coords = coords[batch_mask, :]
+                indices = this_coords[:, 1] * self.ny + this_coords[:, 2]
+                indices = indices.type(torch.long)
+                voxels = voxel_features[batch_mask, :]
+            else:
+                indices = coords[:, 0] * self.ny + coords[:, 1]
+                indices = indices.type(torch.long)
+                voxels = voxel_features
 
-            batch_mask = coords[:, 0] == batch_itt
-            this_coords = coords[batch_mask, :]
-            indices = this_coords[:, 1] * self.ny + this_coords[:, 2]
-            indices = indices.type(torch.long)
-            voxels = voxel_features[batch_mask, :]
             voxels = voxels.t()
 
             # Now scatter the blob back to the canvas.
@@ -93,6 +98,8 @@ class PointPillarsScatter(nn.Module):
 
             # Append to a list for later stacking.
             batch_canvas.append(canvas)
+
+
 
         # Stack to 3-dim tensor (batch-size, nchannels, nrows*ncols)
         batch_canvas = torch.stack(batch_canvas, 0)
@@ -259,7 +266,7 @@ class MultiHead(nn.Module):
 
 class PointPillars(nn.Module):
 
-    def __init__(self, config, inference=None):
+    def __init__(self, config):
         super().__init__()
         self.device = config['device']
         self.pillar_point_net = PointNet(config['num_point_features'], config['voxel_size'], config['detection_offset'])

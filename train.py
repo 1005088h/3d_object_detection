@@ -9,7 +9,7 @@ import json
 from framework.voxel_generator import VoxelGenerator
 from framework.anchor_assigner import AnchorAssigner
 from framework.loss_generator import LossGenerator
-from framework.dataset import GenericDataset
+from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
@@ -155,7 +155,7 @@ def train(config_path=None):
             net.train()
 
 
-def infer():
+def evaluate():
     with open('configs/inhouse.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
@@ -165,21 +165,21 @@ def infer():
     inference = Inference(config, anchor_assigner)
 
     eval_dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=False, augm=False)
+
     eval_dataloader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config['batch_size'],
+        batch_size=None,
         shuffle=False,
-        num_workers=config['num_workers'],
-        pin_memory=False,
-        drop_last=True,
-        collate_fn=merge_second_batch)
+        num_workers=3,
+        pin_memory=False)
+
 
     print(len(eval_dataset))
     net = PointPillars(config)
     net.cuda()
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / 'latest.pth'
+    latest_model_path = model_path / '120000.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -195,6 +195,7 @@ def infer():
         print('\rStep %d' % step, end='')
         try:
             example = next(data_iter)
+            example = merge_second_batch([example])
             t = time.time()
             example = example_convert_to_torch(example, dtype=torch.float16)
             torch.cuda.synchronize()
@@ -258,6 +259,81 @@ def infer():
         plt.show()
     '''
 
+def changeInfo(infos):
+    for idx, info in enumerate(infos):
+        if len(info['annos']['name']) > 0:
+            difficulty_mask = info['annos']["num_points"] > 0
+            for key in info['annos']:
+                info['annos'][key] = info['annos'][key][difficulty_mask]
+            car_mask = info['annos']['name'] == 'car'
+            truck_mask = info['annos']['name'] == 'truck'
+            bus_mask = info['annos']['name'] == 'bus'
+            person_mask = info['annos']['name'] == 'person'
+            bicycle_mask = info['annos']['name'] == 'bicycle'
+            motorbike_mask = info['annos']['name'] == 'motorbike'
+            vehicle_mask = car_mask | truck_mask | bus_mask
+            info['annos']['name'][vehicle_mask] = "vehicle"
+            pedestrian_mask = person_mask
+            info['annos']['name'][pedestrian_mask] = "pedestrian"
+            cyclist_mask = bicycle_mask | motorbike_mask
+            info['annos']['name'][cyclist_mask] = "cyclist"
+
+def infer():
+
+    with open('configs/inhouse.json', 'r') as f:
+        config = json.load(f)
+    device = torch.device("cuda:0")
+    config['device'] = device
+    voxel_generator = VoxelGenerator(config)
+    anchor_assigner = AnchorAssigner(config)
+    inference = Inference(config, anchor_assigner)
+    infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float16)
+    net = PointPillars(config)
+    net.cuda()
+    model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
+    latest_model_path = model_path / '120000.pth'
+    checkpoint = torch.load(latest_model_path)
+    net.load_state_dict(checkpoint['model_state_dict'])
+    print('model loaded')
+    net.half()
+    net.eval()
+
+    t = time.time()
+
+    data_root = Path(config['data_root'])
+    info_paths = config['eval_info']
+    infos = []
+    for info_path in info_paths:
+        info_path = data_root / info_path
+        with open(info_path, 'rb') as f:
+            infos += pickle.load(f)
+    changeInfo(infos)
+    dt_annos = []
+    for idx, info in enumerate(infos):
+
+        # print('\ridx %d' % idx, end='')
+        v_path = data_root / info['velodyne_path']
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        example = infer_data.get(points)
+        with torch.no_grad():
+            preds_dict = net(example)
+        dt_annos += inference.infer(example, preds_dict)
+
+    time_elapse = time.time() - t
+    print("average time : %.5f" % (time_elapse / len(infos)))
+
+    dt_path = Path(config['data_root']) / config['experiment']
+    if not os.path.exists(dt_path):
+        os.makedirs(dt_path)
+
+    with open(dt_path / config['dt_info'], 'wb') as f:
+        pickle.dump(dt_annos, f)
+    gt_annos = [info["annos"] for info in infos]
+    eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
+    APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
+    print(eval_str)
+
 if __name__ == "__main__":
-    train()
-    #infer()
+    #train()
+    #evaluate()
+    infer()
