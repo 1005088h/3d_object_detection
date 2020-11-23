@@ -114,7 +114,12 @@ class GenericDataset(Dataset):
 
             # data augmentation
             if self.augm:
-                # points += np.random.normal(scale=0.015, size=(points.shape[0], points.shape[1]))
+                # sample
+
+                # instance
+                # agm.noise_per_object(gt_boxes, points)
+
+                # global
                 gt_boxes, points = agm.random_flip(gt_boxes, points)
                 gt_boxes, points = agm.global_rotation_v2(gt_boxes, points)
                 gt_boxes, points = agm.global_scaling_v2(gt_boxes, points, min_scale=0.95, max_scale=1.05)

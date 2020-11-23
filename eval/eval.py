@@ -443,7 +443,7 @@ def get_official_eval_result(gt_annos, dt_annos, class_names):
                     'pedestrian': [0.5, 0.25],
                     'cyclist':    [0.5, 0.25]}
 
-    metrics = ['bev', '3d']           # bev, 3d
+    metrics = ['bev', '3d']     # bev, 3d
     frame = 'lidar'             # lidar, camera
     num_point_threshold = 5     # 0, 5, 10
     results = []

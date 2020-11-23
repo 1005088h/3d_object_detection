@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from eval.eval import get_official_eval_result
 
-def train(config_path=None):
+def train():
     with open('configs/inhouse.json', 'r') as f:
         config = json.load(f)
 
@@ -31,7 +31,7 @@ def train(config_path=None):
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -81,7 +81,7 @@ def train(config_path=None):
 
     data_iter = iter(train_dataloader)
     avg_time = time.time()
-    scaler = torch.cuda.amp.GradScaler()
+    # scaler = torch.cuda.amp.GradScaler()
     for step in range(step_num + 1, 10000000):
         epoch = (step * config['batch_size']) // len(train_dataset) + 1
         try:
@@ -93,15 +93,15 @@ def train(config_path=None):
 
         optimizer.zero_grad()
         example = example_convert_to_torch(example)
-        with torch.cuda.amp.autocast():
-            preds_dict = net(example)
+        # with torch.cuda.amp.autocast():
+        preds_dict = net(example)
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
-        scaler.scale(loss).backward() #loss.backward()
-
-        #torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
-        scaler.step(optimizer) #optimizer.step()
-        scaler.update()
+        loss.backward()
+        optimizer.step()
+        # scaler.scale(loss).backward() #loss.backward()
+        # scaler.step(optimizer) #optimizer.step()
+        # scaler.update()
         labels = example['labels']
         cls_preds = preds_dict['cls_preds'].view(config['batch_size'], -1, 1)
 
@@ -334,6 +334,6 @@ def infer():
     print(eval_str)
 
 if __name__ == "__main__":
-    #train()
-    #evaluate()
-    infer()
+    train()
+    # evaluate()
+    # infer()
