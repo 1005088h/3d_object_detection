@@ -290,7 +290,8 @@ def points_in_rbbox(points, rbbox, lidar=True):
     h_axis = 2
     origin = [0.5, 0.5, 0.5]
     rbbox_corners = center_to_corner_box3d(rbbox[:, :3], rbbox[:, 3:6], rbbox[:, 6], origin=origin, axis=h_axis)
-    surfaces = corner_to_surfaces_3d(rbbox_corners)
+    # surfaces = corner_to_surfaces_3d(rbbox_corners)
+    surfaces = corner_to_surfaces_3d_jit(rbbox_corners)
     indices = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
     return indices
 
@@ -314,6 +315,28 @@ def corner_to_surfaces_3d(corners):
         [corners[:, 0], corners[:, 4], corners[:, 5], corners[:, 1]],
         [corners[:, 3], corners[:, 2], corners[:, 6], corners[:, 7]],
     ]).transpose([2, 0, 1, 3])
+    return surfaces
+
+@numba.jit(nopython=True)
+def corner_to_surfaces_3d_jit(corners):
+    """convert 3d box corners from corner function above
+    to surfaces that normal vectors all direct to internal.
+
+    Args:
+        corners (float array, [N, 8, 3]): 3d box corners.
+    Returns:
+        surfaces (float array, [N, 6, 4, 3]):
+    """
+    # box_corners: [N, 8, 3], must from corner functions in this module
+    num_boxes = corners.shape[0]
+    surfaces = np.zeros((num_boxes, 6, 4, 3), dtype=corners.dtype)
+    corner_idxes = np.array([
+        0, 1, 2, 3, 7, 6, 5, 4, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7
+    ]).reshape(6, 4)
+    for i in range(num_boxes):
+        for j in range(6):
+            for k in range(4):
+                surfaces[i, j, k] = corners[i, corner_idxes[j, k]]
     return surfaces
 
 
@@ -483,6 +506,41 @@ def box2d_to_corner_jit(boxes):
         box_corners[i] = corners[i] @ rot_mat_T + boxes[i, :2]
     return box_corners
 
+
+@numba.jit(nopython=True)
+def corner_to_surfaces_3d_jit(corners):
+    """convert 3d box corners from corner function above
+    to surfaces that normal vectors all direct to internal.
+
+    Args:
+        corners (float array, [N, 8, 3]): 3d box corners.
+    Returns:
+        surfaces (float array, [N, 6, 4, 3]):
+    """
+    # box_corners: [N, 8, 3], must from corner functions in this module
+    num_boxes = corners.shape[0]
+    surfaces = np.zeros((num_boxes, 6, 4, 3), dtype=corners.dtype)
+    corner_idxes = np.array([
+        0, 1, 2, 3, 7, 6, 5, 4, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7
+    ]).reshape(6, 4)
+    for i in range(num_boxes):
+        for j in range(6):
+            for k in range(4):
+                surfaces[i, j, k] = corners[i, corner_idxes[j, k]]
+    return surfaces
+
+@numba.njit
+def corner_to_standup_nd_jit(boxes_corner):
+    num_boxes = boxes_corner.shape[0]
+    ndim = boxes_corner.shape[-1]
+    result = np.zeros((num_boxes, ndim * 2), dtype=boxes_corner.dtype)
+    for i in range(num_boxes):
+        for j in range(ndim):
+            result[i, j] = np.min(boxes_corner[i, :, j])
+        for j in range(ndim):
+            result[i, j + ndim] = np.max(boxes_corner[i, :, j])
+    return result
+
 '''    
 def riou_cc(rbboxes, qrbboxes, standup_thresh=0.0):
     # less than 50ms when used in second one thread. 10x slower than gpu
@@ -650,17 +708,7 @@ def corners_2d_jit(dims, origin=0.5):
 
 
 
-@numba.njit
-def corner_to_standup_nd_jit(boxes_corner):
-    num_boxes = boxes_corner.shape[0]
-    ndim = boxes_corner.shape[-1]
-    result = np.zeros((num_boxes, ndim * 2), dtype=boxes_corner.dtype)
-    for i in range(num_boxes):
-        for j in range(ndim):
-            result[i, j] = np.min(boxes_corner[i, :, j])
-        for j in range(ndim):
-            result[i, j + ndim] = np.max(boxes_corner[i, :, j])
-    return result
+
 
 
 def corner_to_standup_nd(boxes_corner):
@@ -906,27 +954,7 @@ def points_in_rbbox(points, rbbox, lidar=True):
 
 
 
-@numba.jit(nopython=True)
-def corner_to_surfaces_3d_jit(corners):
-    """convert 3d box corners from corner function above
-    to surfaces that normal vectors all direct to internal.
 
-    Args:
-        corners (float array, [N, 8, 3]): 3d box corners. 
-    Returns:
-        surfaces (float array, [N, 6, 4, 3]): 
-    """
-    # box_corners: [N, 8, 3], must from corner functions in this module
-    num_boxes = corners.shape[0]
-    surfaces = np.zeros((num_boxes, 6, 4, 3), dtype=corners.dtype)
-    corner_idxes = np.array([
-        0, 1, 2, 3, 7, 6, 5, 4, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7
-    ]).reshape(6, 4)
-    for i in range(num_boxes):
-        for j in range(6):
-            for k in range(4):
-                surfaces[i, j, k] = corners[i, corner_idxes[j, k]]
-    return surfaces
 
 
 def image_box_region_area(img_cumsum, bbox):

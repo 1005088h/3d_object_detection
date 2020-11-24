@@ -90,6 +90,36 @@ def global_translate(gt_boxes, points, noise_translate_std):
 
 
 @numba.njit
+def noise_per_box(boxes, valid_mask, loc_noises, rot_noises):
+    # boxes: [N, 5]
+    # valid_mask: [N]
+    # loc_noises: [N, M, 3]
+    # rot_noises: [N, M]
+    num_boxes = boxes.shape[0]
+    num_tests = loc_noises.shape[1]
+    box_corners = box_np_ops.box2d_to_corner_jit(boxes)
+    current_corners = np.zeros((4, 2), dtype=boxes.dtype)
+    rot_mat_T = np.zeros((2, 2), dtype=boxes.dtype)
+    success_mask = -np.ones((num_boxes, ), dtype=np.int64)
+    # print(valid_mask)
+    for i in range(num_boxes):
+        if valid_mask[i]:
+            for j in range(num_tests):
+                current_corners[:] = box_corners[i]
+
+                current_corners -= boxes[i, :2]
+                _rotation_box2d_jit_(current_corners, rot_noises[i, j], rot_mat_T)
+                current_corners += boxes[i, :2] + loc_noises[i, j, :2]
+                coll_mat = box_collision_test(current_corners.reshape(1, 4, 2), box_corners)
+                coll_mat[0, i] = False
+                # print(coll_mat)
+                if not coll_mat.any():
+                    success_mask[i] = j
+                    box_corners[i] = current_corners
+                    break
+    return success_mask
+
+@numba.njit
 def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
                       global_rot_noises):
     # boxes: [N, 5]
@@ -100,10 +130,11 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
     num_tests = loc_noises.shape[1]
     box_corners = box_np_ops.box2d_to_corner_jit(boxes)
     current_corners = np.zeros((4, 2), dtype=boxes.dtype)
-    current_box = np.zeros((1, 5), dtype=boxes.dtype)
     rot_mat_T = np.zeros((2, 2), dtype=boxes.dtype)
+    success_mask = -np.ones((num_boxes,), dtype=np.int64)
+
+    current_box = np.zeros((1, 5), dtype=boxes.dtype)
     dst_pos = np.zeros((2, ), dtype=boxes.dtype)
-    success_mask = -np.ones((num_boxes, ), dtype=np.int64)
     corners_norm = np.zeros((4, 2), dtype=boxes.dtype)
     corners_norm[1, 1] = 1.0
     corners_norm[2] = 1.0
@@ -120,20 +151,20 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
                 dst_pos[0] = current_radius * np.cos(dst_grot)
                 dst_pos[1] = current_radius * np.sin(dst_grot)
                 current_box[0, :2] = dst_pos
-                current_box[0, -1] += (dst_grot - current_grot)
-
+                current_box[0, -1] += global_rot_noises[i, j] # (dst_grot - current_grot)
                 rot_sin = np.sin(current_box[0, -1])
                 rot_cos = np.cos(current_box[0, -1])
                 rot_mat_T[0, 0] = rot_cos
-                rot_mat_T[0, 1] = -rot_sin
-                rot_mat_T[1, 0] = rot_sin
+                rot_mat_T[0, 1] = rot_sin
+                rot_mat_T[1, 0] = -rot_sin
                 rot_mat_T[1, 1] = rot_cos
-                current_corners[:] = current_box[0, 2:4] * corners_norm @ rot_mat_T + current_box[0, :2]
-                current_corners -= current_box[0, :2]
+
+                current_corners[:] = current_box[0, 2:4] * corners_norm @ rot_mat_T# + current_box[0, :2]
+
+                # current_corners -= current_box[0, :2]
                 _rotation_box2d_jit_(current_corners, rot_noises[i, j], rot_mat_T)
                 current_corners += current_box[0, :2] + loc_noises[i, j, :2]
-                coll_mat = box_collision_test(
-                    current_corners.reshape(1, 4, 2), box_corners)
+                coll_mat = box_collision_test(current_corners.reshape(1, 4, 2), box_corners)
                 coll_mat[0, i] = False
                 if not coll_mat.any():
                     success_mask[i] = j
@@ -145,35 +176,35 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
 
 def noise_per_object(gt_boxes,
                      points=None,
+                     valid_mask=None,
                      rotation_perturb=np.pi / 4,
                      center_noise_std=1.0,
-                     global_random_rot_range=np.pi / 4,
+                     global_random_rot_range=(5.0 / 180) * np.pi,
                      num_try=100):
 
     num_boxes = gt_boxes.shape[0]
     rotation_perturb = [-rotation_perturb, rotation_perturb]
-    global_random_rot_range = [-global_random_rot_range, global_random_rot_range]
-    enable_grot = np.abs(global_random_rot_range[0] - global_random_rot_range[1]) >= 1e-3
+    # global_random_rot_range = [-global_random_rot_range, global_random_rot_range]
+    # enable_grot = np.abs(global_random_rot_range[0] - global_random_rot_range[1]) >= 1e-3
     center_noise_std = [center_noise_std, center_noise_std, center_noise_std]
-    valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
+    if valid_mask is None:
+        valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
 
     center_noise_std = np.array(center_noise_std, dtype=gt_boxes.dtype)
     loc_noises = np.random.normal(scale=center_noise_std, size=[num_boxes, num_try, 3])
     rot_noises = np.random.uniform(rotation_perturb[0], rotation_perturb[1], size=[num_boxes, num_try])
-    gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
-    grot_lowers = global_random_rot_range[0] - gt_grots
-    grot_uppers = global_random_rot_range[1] - gt_grots
+    # gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
+    '''
+    grot_lowers = global_random_rot_range[0] # - gt_grots
+    grot_uppers = global_random_rot_range[1] # - gt_grots
     global_rot_noises = np.random.uniform(
         grot_lowers[..., np.newaxis],
         grot_uppers[..., np.newaxis],
         size=[num_boxes, num_try])
-    gt_box_corners = box_np_ops.center_to_corner_box3d(
-        gt_boxes[:, :3],
-        gt_boxes[:, 3:6],
-        gt_boxes[:, 6],
-        origin=[0.5, 0.5, 0.5],
-        axis=2)
-
+    '''
+    global_rot_noises = np.random.uniform(-global_random_rot_range, global_random_rot_range, size=[num_boxes, num_try])
+    point_masks = box_np_ops.points_in_rbbox(points, gt_boxes)
+    enable_grot = True
     if not enable_grot:
         selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],
                                        valid_mask, loc_noises, rot_noises)
@@ -181,10 +212,10 @@ def noise_per_object(gt_boxes,
         selected_noise = noise_per_box_v2_(gt_boxes[:, [0, 1, 3, 4, 6]],
                                            valid_mask, loc_noises,
                                            rot_noises, global_rot_noises)
+
     loc_transforms = _select_transform(loc_noises, selected_noise)
     rot_transforms = _select_transform(rot_noises, selected_noise)
-    surfaces = box_np_ops.corner_to_surfaces_3d_jit(gt_box_corners)
-    point_masks = points_in_convex_polygon_3d_jit(points[:, :3], surfaces)
+
     points_transform_(points, gt_boxes[:, :3], point_masks, loc_transforms,
                       rot_transforms, valid_mask)
     box3d_transform_(gt_boxes, loc_transforms, rot_transforms, valid_mask)
@@ -213,8 +244,8 @@ def _rotation_matrix_3d_(rot_mat_T, angle, axis):
         rot_mat_T[2, 2] = rot_cos
     elif axis == 2 or axis == -1:#yaw
         rot_mat_T[0, 0] = rot_cos
-        rot_mat_T[0, 1] = -rot_sin
-        rot_mat_T[1, 0] = rot_sin
+        rot_mat_T[0, 1] = rot_sin
+        rot_mat_T[1, 0] = -rot_sin
         rot_mat_T[1, 1] = rot_cos
     elif axis == 0:#roll
         rot_mat_T[1, 1] = rot_cos
@@ -228,8 +259,8 @@ def _rotation_box2d_jit_(corners, angle, rot_mat_T):
     rot_sin = np.sin(angle)
     rot_cos = np.cos(angle)
     rot_mat_T[0, 0] = rot_cos
-    rot_mat_T[0, 1] = -rot_sin
-    rot_mat_T[1, 0] = rot_sin
+    rot_mat_T[0, 1] = rot_sin
+    rot_mat_T[1, 0] = -rot_sin
     rot_mat_T[1, 1] = rot_cos
     corners[:] = corners @ rot_mat_T
 
@@ -255,38 +286,6 @@ def _box_single_to_corner_jit(boxes):
         rot_mat_T[1, 1] = rot_cos
         box_corners[i] = corners[i] @ rot_mat_T + boxes[i, :2]
     return box_corners
-
-
-@numba.njit
-def noise_per_box(boxes, valid_mask, loc_noises, rot_noises):
-    # boxes: [N, 5]
-    # valid_mask: [N]
-    # loc_noises: [N, M, 3]
-    # rot_noises: [N, M]
-    num_boxes = boxes.shape[0]
-    num_tests = loc_noises.shape[1]
-    box_corners = box_np_ops.box2d_to_corner_jit(boxes)
-    current_corners = np.zeros((4, 2), dtype=boxes.dtype)
-    rot_mat_T = np.zeros((2, 2), dtype=boxes.dtype)
-    success_mask = -np.ones((num_boxes, ), dtype=np.int64)
-    # print(valid_mask)
-    for i in range(num_boxes):
-        if valid_mask[i]:
-            for j in range(num_tests):
-                current_corners[:] = box_corners[i]
-                current_corners -= boxes[i, :2]
-                _rotation_box2d_jit_(current_corners, rot_noises[i, j],
-                                     rot_mat_T)
-                current_corners += boxes[i, :2] + loc_noises[i, j, :2]
-                coll_mat = box_collision_test(
-                    current_corners.reshape(1, 4, 2), box_corners)
-                coll_mat[0, i] = False
-                # print(coll_mat)
-                if not coll_mat.any():
-                    success_mask[i] = j
-                    box_corners[i] = current_corners
-                    break
-    return success_mask
 
 
 @numba.njit
@@ -406,9 +405,6 @@ def noise_per_box_group_v2_(boxes, valid_mask, loc_noises, rot_noises,
                     break
         idx += num
     return success_mask
-
-
-
 
 @numba.njit
 def points_transform_(points, centers, point_masks, loc_transform,

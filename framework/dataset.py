@@ -24,6 +24,7 @@ class GenericDataset(Dataset):
         self.anchor_assigner = anchor_assigner
 
         self.detect_class = config['detect_class']
+        self.augm_class = config['detect_class']
 
         self.detection_range = config['detection_range']
         self.grid_size = config['grid_size']
@@ -117,7 +118,8 @@ class GenericDataset(Dataset):
                 # sample
 
                 # instance
-                # agm.noise_per_object(gt_boxes, points)
+                augm_class_mask = np.array([n in self.augm_class for n in annos["name"]], dtype=np.bool_)
+                agm.noise_per_object(gt_boxes, points, augm_class_mask)
 
                 # global
                 gt_boxes, points = agm.random_flip(gt_boxes, points)

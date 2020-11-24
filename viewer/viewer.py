@@ -26,8 +26,6 @@ from eval.eval import bev_box_overlap
 from utils import remove_low_score
 from views import MatPlotLibView, KittiDrawControl, KittiPointCloudView
 from utils import Settings, riou3d_shapely
-
-
 from framework.anchor_assigner import AnchorAssigner
 from framework.voxel_generator import VoxelGenerator
 from framework.dataset import GenericDataset
@@ -55,18 +53,18 @@ class PCViewer(QMainWindow):
         self.config_path = '../configs/inhouse.json'
         self.dataset = None
         self.anchors = None
-        self.augm = False
+        self.augm = True
         self.plot_anchors = False
         self.plot_voxel = False
 
 
-    def build_dataset(self, info_path=None):
+    def build_dataset(self):
 
         with open(self.config_path, 'r') as f:
             config = json.load(f)
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
-        dataset = GenericDataset(config, info_path, voxel_generator, anchor_assigner, training=True, augm=self.augm)
+        dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
         return dataset
 
     def init_ui(self):
@@ -131,7 +129,6 @@ class PCViewer(QMainWindow):
         self.w_save_gbox.setLayout(layout)
         control_panel_layout.addWidget(self.w_save_gbox)
 
-
         self.w_save_image = QPushButton('save image')
         self.w_save_image.clicked.connect(self.on_saveImagePressed)
         self.w_save_video = QPushButton('save video')
@@ -163,10 +160,10 @@ class PCViewer(QMainWindow):
         self.show()
 
     def on_loadButtonPressed(self):
-        info_path = [self.w_info_path.text()]
-        self.dataset = self.build_dataset(info_path)
+        # info_path = [self.w_info_path.text()]
+        self.dataset = self.build_dataset()
         self.log("load", len(self.dataset), "infos.")
-        self.json_setting.set("latest_info_path", str(info_path))
+        # self.json_setting.set("latest_info_path", str(info_path))
 
     def on_loadDetPressed(self):
         det_path = self.w_det_path.text()
@@ -199,7 +196,7 @@ class PCViewer(QMainWindow):
         self.info = self.dataset.infos[idx]
         self.example = self.dataset[idx]
         if 'img_path' in self.info:
-            img_path = self.dataset.root_dir / self.info['img_path']
+            img_path = self.dataset.data_root / self.info['img_path']
             if img_path != "":
                 self.current_image = io.imread(img_path)
             else:
@@ -241,8 +238,8 @@ class PCViewer(QMainWindow):
         self.w_pc_viewer.draw_bounding_box(self.w_config.get("CoorsRange"))
         if self.gt_boxes is not None and len(self.gt_boxes) > 0:
             gt_boxes = copy.deepcopy(self.gt_boxes)
-            gt_boxes[:, 3:6] = gt_boxes[:, 3:6] + np.array([1.2, 0.8, 8])
-            #gt_boxes[:, 2] = gt_boxes[:, 2] + np.array([1])
+            # gt_boxes[:, 3:6] = gt_boxes[:, 3:6] + np.array([1.2, 0.8, 8])
+            # gt_boxes[:, 2] = gt_boxes[:, 2] + np.array([1])
             gt_point_table = box_np_ops.points_in_rbbox(self.points, gt_boxes)
             self.gt_filled_mask = gt_point_table.sum(axis=0)
             gt_point_mask = gt_point_table.any(1)
