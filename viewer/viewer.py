@@ -53,7 +53,7 @@ class PCViewer(QMainWindow):
         self.config_path = '../configs/inhouse.json'
         self.dataset = None
         self.anchors = None
-        self.augm = True
+        self.augm = False
         self.plot_anchors = False
         self.plot_voxel = False
 
@@ -64,7 +64,7 @@ class PCViewer(QMainWindow):
             config = json.load(f)
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
-        dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
+        dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
         return dataset
 
     def init_ui(self):
@@ -436,7 +436,7 @@ class PCViewer(QMainWindow):
         self.plot_all(self.current_idx)
 
     def on_saveVideoPressed(self):
-        end_idx = self.current_idx + 189
+        end_idx = self.current_idx + 400
         while self.current_idx < end_idx:
             print(self.current_idx)
             self.on_saveImagePressed()

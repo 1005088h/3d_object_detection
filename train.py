@@ -55,7 +55,7 @@ def train():
 
     net = PointPillars(config)
     net.to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])
+    optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate']) # AdamW
     step_num = 0
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
@@ -68,6 +68,8 @@ def train():
         checkpoint = torch.load(latest_model_path)
         net.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        optimizer.param_groups[0]['lr'] = config['learning_rate']
+        # optimizer.param_groups[0]['betas'] = (0.5, 0.999)
         step_num = checkpoint['step']
         print('model loaded')
 
@@ -179,8 +181,8 @@ def evaluate():
     net.cuda()
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '120000.pth'
-    checkpoint = torch.load(latest_model_path)
+    eval_model_path = model_path / '1135000.pth'
+    checkpoint = torch.load(eval_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
 
@@ -234,7 +236,7 @@ def evaluate():
     print("network_t : %.5f" % network_t)
     print("post_t : %.5f" % post_t)
 
-    dt_path = Path(config['data_root']) / config['experiment']
+    dt_path = Path(config['data_root']) /config['result_path'] / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
 
@@ -291,7 +293,7 @@ def infer():
     net = PointPillars(config)
     net.cuda()
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '120000.pth'
+    latest_model_path = model_path / '960000.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -334,6 +336,6 @@ def infer():
     print(eval_str)
 
 if __name__ == "__main__":
-    train()
-    # evaluate()
+    # train()
+    evaluate()
     # infer()

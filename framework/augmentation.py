@@ -27,19 +27,19 @@ def global_rotation(gt_boxes, points, rotation=np.pi / 4):
     return gt_boxes, points
 
 def global_rotation_v2(gt_boxes, points):
-    pitch = 3
+    pitch = 4
     pitch = np.random.uniform(-pitch, pitch)
     pitch = pitch / 180 * np.pi
     points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], pitch, axis=1)
     gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(gt_boxes[:, :3], pitch, axis=1)
 
-    roll = 1
+    roll = 2
     roll = np.random.uniform(-roll, roll)
     roll = roll / 180 * np.pi
     points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], roll, axis=0)
     gt_boxes[:, :3] = box_np_ops.rotation_points_single_angle(gt_boxes[:, :3], roll, axis=0)
 
-    yaw = 40
+    yaw = 30
     yaw = np.random.uniform(-yaw, yaw)
     yaw = yaw / 180 * np.pi
     points[:, :3] = box_np_ops.rotation_points_single_angle(points[:, :3], yaw, axis=2)
@@ -177,15 +177,13 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
 def noise_per_object(gt_boxes,
                      points=None,
                      valid_mask=None,
-                     rotation_perturb=np.pi / 4,
-                     center_noise_std=1.0,
+                     rotation_perturb=(10.0 / 180) * np.pi,
+                     center_noise_std=0.2,
                      global_random_rot_range=(5.0 / 180) * np.pi,
                      num_try=100):
 
     num_boxes = gt_boxes.shape[0]
     rotation_perturb = [-rotation_perturb, rotation_perturb]
-    # global_random_rot_range = [-global_random_rot_range, global_random_rot_range]
-    # enable_grot = np.abs(global_random_rot_range[0] - global_random_rot_range[1]) >= 1e-3
     center_noise_std = [center_noise_std, center_noise_std, center_noise_std]
     if valid_mask is None:
         valid_mask = np.ones((num_boxes, ), dtype=np.bool_)
@@ -193,18 +191,11 @@ def noise_per_object(gt_boxes,
     center_noise_std = np.array(center_noise_std, dtype=gt_boxes.dtype)
     loc_noises = np.random.normal(scale=center_noise_std, size=[num_boxes, num_try, 3])
     rot_noises = np.random.uniform(rotation_perturb[0], rotation_perturb[1], size=[num_boxes, num_try])
-    # gt_grots = np.arctan2(gt_boxes[:, 0], gt_boxes[:, 1])
-    '''
-    grot_lowers = global_random_rot_range[0] # - gt_grots
-    grot_uppers = global_random_rot_range[1] # - gt_grots
-    global_rot_noises = np.random.uniform(
-        grot_lowers[..., np.newaxis],
-        grot_uppers[..., np.newaxis],
-        size=[num_boxes, num_try])
-    '''
     global_rot_noises = np.random.uniform(-global_random_rot_range, global_random_rot_range, size=[num_boxes, num_try])
     point_masks = box_np_ops.points_in_rbbox(points, gt_boxes)
-    enable_grot = True
+    enable_grot = False
+    if global_random_rot_range > (0.1 / 180) * np.pi:
+        enable_grot = True
     if not enable_grot:
         selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],
                                        valid_mask, loc_noises, rot_noises)
