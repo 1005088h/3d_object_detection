@@ -20,7 +20,7 @@ from pathlib import Path
 from eval.eval import get_official_eval_result
 
 def train():
-    with open('configs/inhouse.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
 
     device = torch.device("cuda:0")
@@ -31,7 +31,7 @@ def train():
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -100,6 +100,7 @@ def train():
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
         optimizer.step()
         # scaler.scale(loss).backward() #loss.backward()
         # scaler.step(optimizer) #optimizer.step()
@@ -336,6 +337,6 @@ def infer():
     print(eval_str)
 
 if __name__ == "__main__":
-    # train()
-    evaluate()
+    train()
+    # evaluate()
     # infer()

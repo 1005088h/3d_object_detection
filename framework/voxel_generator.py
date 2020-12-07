@@ -15,24 +15,24 @@ class VoxelGenerator:
         detection_range = np.concatenate((offset, offset + range_diff), axis=0)
 
         self.voxel_size = voxel_size
-        self._detection_range = detection_range
+        self.detection_range = detection_range
         self.offset = offset
-        self._grid_size = grid_size
-        self._max_num_points = config['max_num_points']
-        self._max_voxels = config['max_voxels']
+        self.grid_size = grid_size
+        self.max_num_points = config['max_num_points']
+        self.max_voxels = config['max_voxels']
         config['detection_range'] = detection_range
         config['detection_offset'] = offset
         config['detection_range_diff'] = range_diff
         config['grid_size'] = grid_size
 
     def generate(self, points):
-        voxels = np.zeros(shape=(self._max_voxels, self._max_num_points, points.shape[-1]), dtype=points.dtype)
-        num_points_per_voxel = np.zeros(shape=(self._max_voxels,), dtype=np.int32)
-        coors = np.zeros(shape=(self._max_voxels, 3), dtype=np.int32)
-        coor_to_voxelidx = -np.ones(shape=self._grid_size, dtype=np.int32)
+        voxels = np.zeros(shape=(self.max_voxels, self.max_num_points, points.shape[-1]), dtype=points.dtype)
+        num_points_per_voxel = np.zeros(shape=(self.max_voxels,), dtype=np.int32)
+        coors = np.zeros(shape=(self.max_voxels, 3), dtype=np.int32)
+        coor_to_voxelidx = -np.ones(shape=self.grid_size, dtype=np.int32)
 
         voxel_num = points_to_voxels(points, voxels, num_points_per_voxel, coors, coor_to_voxelidx, self.voxel_size,
-                                    self.offset, self._grid_size, self._max_voxels, self._max_num_points)
+                                    self.offset, self.grid_size, self.max_voxels, self.max_num_points)
         coors = coors[:voxel_num]
         voxels = voxels[:voxel_num]
         num_points_per_voxel = num_points_per_voxel[:voxel_num]

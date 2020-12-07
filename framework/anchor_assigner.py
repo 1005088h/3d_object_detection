@@ -39,9 +39,7 @@ class AnchorAssigner:
         self.unmatched_threshold = []
         self.class_masks = {}
         #self.names = []
-
         #self.class_anchor = {}
-
         start_index = 0
         for cls in self.detect_class:
             self.sizes = config[cls]["sizes"]
