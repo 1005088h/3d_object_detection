@@ -22,7 +22,7 @@ from eval.eval import get_official_eval_result
 import torch
 
 def train():
-    with open('configs/ntusl_20cm.json', 'r') as f:
+    with open('configs/ntusl_10cm.json', 'r') as f:
         config = json.load(f)
 
     device = torch.device("cuda:0")
@@ -33,7 +33,7 @@ def train():
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],

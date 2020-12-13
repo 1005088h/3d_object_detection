@@ -122,10 +122,14 @@ class RPN(nn.Module):
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
         self.out_plane = sum(num_upsample_filters)
-        model = [nn.ZeroPad2d(1),
-                 nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2),
+        model = [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
+
+        model += [nn.Conv2d(num_filters[0], num_filters[0], 3, stride=2, padding=1),
+                 norm_layer(num_filters[0]),
+                 nn.ReLU()]
+
         for i in range(layer_nums[0]):
             model += [nn.Conv2d(num_filters[0], num_filters[0], 3, padding=1),
                       norm_layer(num_filters[0]),

@@ -9,8 +9,9 @@ class VoxelGenerator:
         detection_range = np.array(config['detection_range'], dtype=np.float32)
         detection_center = (detection_range[3:] + detection_range[:3]) / 2
         voxel_size = np.array(config['voxel_size'], dtype=np.float32)
-        grid_size = (detection_range[3:] - detection_range[:3]) // voxel_size
-        grid_size = np.round(grid_size).astype(np.int32)
+        range = detection_range[3:] - detection_range[:3]
+        grid_size = range / voxel_size
+        grid_size = grid_size.astype(np.int32)
         range_diff = grid_size.astype(voxel_size.dtype) * voxel_size
         offset = detection_center - range_diff / 2
         detection_range = np.concatenate((offset, offset + range_diff), axis=0)
