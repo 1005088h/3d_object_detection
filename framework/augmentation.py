@@ -177,9 +177,9 @@ def noise_per_box_v2_(boxes, valid_mask, loc_noises, rot_noises,
 def noise_per_object(gt_boxes,
                      points=None,
                      valid_mask=None,
-                     rotation_perturb=(10.0 / 180) * np.pi,
-                     center_noise_std=0.2,
-                     global_random_rot_range=(5.0 / 180) * np.pi,
+                     rotation_perturb=(5.0 / 180) * np.pi,
+                     center_noise_std=0.15,
+                     global_random_rot_range=(2.0 / 180) * np.pi,
                      num_try=100):
 
     num_boxes = gt_boxes.shape[0]

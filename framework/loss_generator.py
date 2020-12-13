@@ -1,7 +1,8 @@
 import torch
+from torch import nn
 import numpy as np
 from enum import Enum
-from torch import nn
+
 
 
 class LossGenerator:

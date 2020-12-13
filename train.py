@@ -1,11 +1,12 @@
-import copy
 
-import torch
+
+
+
 import pickle
 import os
 import time
 import json
-
+import copy
 from framework.voxel_generator import VoxelGenerator
 from framework.anchor_assigner import AnchorAssigner
 from framework.loss_generator import LossGenerator
@@ -18,6 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from eval.eval import get_official_eval_result
+import torch
 
 def train():
     with open('configs/ntusl_20cm.json', 'r') as f:
@@ -31,7 +33,7 @@ def train():
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -283,22 +285,22 @@ def changeInfo(infos):
 
 def infer():
 
-    with open('configs/inhouse.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
     voxel_generator = VoxelGenerator(config)
     anchor_assigner = AnchorAssigner(config)
     inference = Inference(config, anchor_assigner)
-    infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float16)
+    infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
     net.cuda()
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '960000.pth'
+    latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
-    net.half()
+    # net.half()
     net.eval()
 
     t = time.time()
@@ -312,11 +314,14 @@ def infer():
             infos += pickle.load(f)
     changeInfo(infos)
     dt_annos = []
+    pts = np.load('/home/xy/ST/object3d_det/pts.npy').astype(np.float32)
+    # pts = np.fromfile('/home/xy/ST/object3d_det/pts.npy', dtype=np.float32, count=-1)
+    points = pts[:, :4]
+    print(points)
     for idx, info in enumerate(infos):
-
-        # print('\ridx %d' % idx, end='')
+        print('\ridx %d' % idx, end='')
         v_path = data_root / info['velodyne_path']
-        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        # points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
         example = infer_data.get(points)
         with torch.no_grad():
             preds_dict = net(example)
@@ -336,7 +341,63 @@ def infer():
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
 
+
+class PointPillarsNode:
+    def __init__(self):
+        with open('configs/ntusl_20cm.json', 'r') as f:
+            config = json.load(f)
+        device = torch.device("cuda:0")
+        config['device'] = device
+        voxel_generator = VoxelGenerator(config)
+        anchor_assigner = AnchorAssigner(config)
+        self.inference = Inference(config, anchor_assigner)
+        self.infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
+        self.net = PointPillars(config)
+        self.net.cuda()
+        model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
+        latest_model_path = model_path / 'latest.pth'
+        checkpoint = torch.load(latest_model_path)
+        self.net.load_state_dict(checkpoint['model_state_dict'])
+        print('model loaded')
+        self.net.eval()
+
+        self.data_root = Path(config['data_root'])
+        info_paths = config['eval_info']
+        self.infos = []
+        for info_path in info_paths:
+            info_path = self.data_root / info_path
+            with open(info_path, 'rb') as f:
+                self.infos += pickle.load(f)
+
+    def lidar_callback(self, msg):
+        points = np.asarray(list(pc2.read_points(msg)))[:, :4]
+        stamp = msg.header.stamp
+        self.q_msg.put((points, stamp))
+        print("puting...", stamp)
+
+    def spin(self):
+        time_elapse = 0.0
+        len_infos = 0
+        rospy.init_node("PointPillars", anonymous=False)
+        rospy.Subscriber('/combined_lidar', PointCloud2, callback=self.lidar_callback, queue_size=1)
+        print('spinning.')
+        len_infos = len(self.infos)
+        dt_annos = []
+        for idx, info in enumerate(self.infos):
+            print('\ridx %d' % idx, end='')
+            v_path = self.data_root / info['velodyne_path']
+            points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+            start_time = time.time()
+            example = self.infer_data.get(points)
+            with torch.no_grad():
+                preds_dict = self.net(example)
+            dt_annos += self.inference.infer(example, preds_dict)
+            dur = time.time() - start_time
+            time_elapse += dur
+        print("average time : %.5f" % (time_elapse / len_infos))
+
 if __name__ == "__main__":
     train()
     # evaluate()
+    # PointPillarsNode().spin()
     # infer()

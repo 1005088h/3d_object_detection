@@ -284,7 +284,7 @@ def box_decode(box_encodings, anchors):
     rg = rt + ra
     #zg = zg - hg / 2
     return np.concatenate([xg, yg, zg, wg, lg, hg, rg], axis=-1)
-
+    
 
 def points_in_rbbox(points, rbbox, lidar=True):
     h_axis = 2

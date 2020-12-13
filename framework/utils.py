@@ -1,7 +1,8 @@
+import torch
 from collections import defaultdict
 import numpy as np
 import time
-import torch
+
 
 def example_convert_to_torch(example, dtype=torch.float32):
     device = torch.device("cuda:0")

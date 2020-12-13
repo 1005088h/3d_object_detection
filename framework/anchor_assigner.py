@@ -1,8 +1,8 @@
+import framework.box_torch_ops as box_torch_ops
 import time
-
 import numpy as np
 import framework.box_np_ops as box_np_ops
-import framework.box_torch_ops as box_torch_ops
+
 
 
 class AnchorAssigner:
