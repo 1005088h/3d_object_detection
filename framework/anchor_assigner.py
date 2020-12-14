@@ -104,9 +104,7 @@ class AnchorAssigner:
 
     def create_mask(self, coors, grid_size, voxel_size, offset):
         anchors_bv = self.anchors_bv
-
         dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
-
         dense_voxel_map = dense_voxel_map.cumsum(0)
         dense_voxel_map = dense_voxel_map.cumsum(1)
         #anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)

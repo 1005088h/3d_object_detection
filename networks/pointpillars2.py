@@ -23,6 +23,12 @@ class PointNet(nn.Module):
                  nn.ReLU(True)]
         self.pfn_layers = nn.Sequential(*model)
 
+        model = [nn.Conv1d(self.out_channels, 1, kernel_size=1, padding=0, bias=False),
+                 nn.BatchNorm1d(self.out_channels),
+                 nn.ReLU(True)]
+
+        self.pfn_layers2 = nn.Sequential(*model)
+
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
         points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
@@ -52,8 +58,8 @@ class PointNet(nn.Module):
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
-        x_max = torch.max(x, dim=1, keepdim=True)[0]
-
+        # x_max = torch.max(x, dim=1, keepdim=True)[0]
+        x_max = self.pfn_layers2(x)
         return x_max.squeeze()
 
 
@@ -122,14 +128,24 @@ class RPN(nn.Module):
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
         self.out_plane = sum(num_upsample_filters)
-        model = [nn.ZeroPad2d(1),
-                 nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2),
+        model = [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
+
+        model += [Resnet(num_filters[0], norm_layer)]
+
+        model += [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
+                 norm_layer(num_filters[0]),
+                 nn.ReLU()]
+        '''
         for i in range(layer_nums[0]):
             model += [nn.Conv2d(num_filters[0], num_filters[0], 3, padding=1),
                       norm_layer(num_filters[0]),
                       nn.ReLU()]
+        self.block1 = Sequential(*model)
+        '''
+        for i in range(2):
+            model += [Resnet(num_filters[0], norm_layer)]
         self.block1 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
@@ -137,14 +153,18 @@ class RPN(nn.Module):
                  nn.ReLU()]
         self.deconv1 = Sequential(*model)
 
-        model = [nn.ZeroPad2d(1),
-                 nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1]),
+        model = [nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
+        '''
         for i in range(layer_nums[1]):
             model += [nn.Conv2d(num_filters[1], num_filters[1], 3, padding=1),
                       norm_layer(num_filters[1]),
                       nn.ReLU()]
+        self.block2 = Sequential(*model)
+        '''
+        for i in range(2):
+            model += [Resnet(num_filters[1], norm_layer)]
         self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
@@ -153,14 +173,18 @@ class RPN(nn.Module):
                  nn.ReLU()]
         self.deconv2 = Sequential(*model)
 
-        model = [nn.ZeroPad2d(1),
-                 nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2]),
+        model = [nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
+        '''
         for i in range(layer_nums[2]):
             model += [nn.Conv2d(num_filters[2], num_filters[2], 3, padding=1),
                       norm_layer(num_filters[2]),
                       nn.ReLU()]
+        self.block3 = Sequential(*model)
+        '''
+        for i in range(2):
+            model += [Resnet(num_filters[2], norm_layer)]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
@@ -313,6 +337,7 @@ class Resnet(nn.Module):
         super(Resnet, self).__init__()
         conv_block = []
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=1), norm_layer(dim), nn.ReLU(True)]
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=1), norm_layer(dim)]
         self.conv_block = nn.Sequential(*conv_block)
         self.relu = nn.ReLU()
 

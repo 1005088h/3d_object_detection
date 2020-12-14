@@ -1,7 +1,4 @@
-
-
-
-
+import torch
 import pickle
 import os
 import time
@@ -14,12 +11,13 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars import PointPillars
+# from networks.pointpillars import PointPillars
+from networks.pointpillars2 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from eval.eval import get_official_eval_result
-import torch
+
 
 def train():
     with open('configs/ntusl_10cm.json', 'r') as f:
@@ -33,7 +31,7 @@ def train():
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=False)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -153,7 +151,7 @@ def train():
 
             eval_classes = ["vehicle", "pedestrian", "cyclist"] #["vehicle", "pedestrian", "cyclist"]
             APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
-            log_str = 'Step: %d\n%s' % (step, eval_str)
+            log_str = '\nStep: %d%s' % (step, eval_str)
             print(log_str)
             with open(log_file, 'a+') as f:
                 f.write(log_str)
@@ -303,8 +301,6 @@ def infer():
     # net.half()
     net.eval()
 
-    t = time.time()
-
     data_root = Path(config['data_root'])
     info_paths = config['eval_info']
     infos = []
@@ -314,20 +310,18 @@ def infer():
             infos += pickle.load(f)
     changeInfo(infos)
     dt_annos = []
-    pts = np.load('/home/xy/ST/object3d_det/pts.npy').astype(np.float32)
-    # pts = np.fromfile('/home/xy/ST/object3d_det/pts.npy', dtype=np.float32, count=-1)
-    points = pts[:, :4]
-    print(points)
+    time_elapse = 0.0
     for idx, info in enumerate(infos):
         print('\ridx %d' % idx, end='')
         v_path = data_root / info['velodyne_path']
-        # points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        t = time.time()
         example = infer_data.get(points)
         with torch.no_grad():
             preds_dict = net(example)
         dt_annos += inference.infer(example, preds_dict)
+        time_elapse += time.time() - t
 
-    time_elapse = time.time() - t
     print("average time : %.5f" % (time_elapse / len(infos)))
 
     dt_path = Path(config['data_root']) / config['experiment']
@@ -377,7 +371,6 @@ class PointPillarsNode:
 
     def spin(self):
         time_elapse = 0.0
-        len_infos = 0
         rospy.init_node("PointPillars", anonymous=False)
         rospy.Subscriber('/combined_lidar', PointCloud2, callback=self.lidar_callback, queue_size=1)
         print('spinning.')

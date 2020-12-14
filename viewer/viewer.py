@@ -50,12 +50,12 @@ class PCViewer(QMainWindow):
         self.gt_bbox = None
         self.classes = ["vehicle", "pedestrian", "cyclist"]
 
-        self.config_path = '../configs/inhouse.json'
+        self.config_path = '../configs/ntusl_10cm.json'
         self.dataset = None
         self.anchors = None
         self.augm = False
-        self.plot_anchors = False
-        self.plot_voxel = False
+        self.plot_anchors = True
+        self.plot_voxel = True
 
 
     def build_dataset(self):
@@ -204,7 +204,17 @@ class PCViewer(QMainWindow):
         else:
             self.current_image = None
 
-        self.points = self.example['points']
+
+        if self.plot_voxel:
+            self.points = []
+            self.voxels = self.example['voxels']
+            self.num = self.example['num_points_per_voxel']
+            for v, num in zip(self.voxels, self.num):
+                self.points.append(v[:num])
+            self.points = np.concatenate(self.points, axis=0)
+        else:
+            self.points = self.example['points']
+
         self.gt_names = self.example['annos']['gt_names']
         self.gt_boxes = self.example['annos']['gt_boxes']
         if self.plot_anchors:
