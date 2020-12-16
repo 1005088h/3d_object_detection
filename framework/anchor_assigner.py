@@ -41,6 +41,10 @@ class AnchorAssigner:
         #self.names = []
         #self.class_anchor = {}
         start_index = 0
+
+        self.sparse_sum_time = 0.0
+        self.anchors_area_time = 0.0
+
         for cls in self.detect_class:
             self.sizes = config[cls]["sizes"]
             self.rotations = config[cls]["rotations"]
@@ -104,16 +108,18 @@ class AnchorAssigner:
 
     def create_mask(self, coors, grid_size, voxel_size, offset):
         anchors_bv = self.anchors_bv
+        start = time.time()
         dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
+        # dense_voxel_map = box_np_ops.cumsum(dense_voxel_map)
         dense_voxel_map = dense_voxel_map.cumsum(0)
         dense_voxel_map = dense_voxel_map.cumsum(1)
-        #anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
-        #t = time.time()
+        sparse_sum = time.time()
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
-        #t = time.time() - t
-        #print(t)
+
         anchors_mask = anchors_area > 0
-        # anchors_mask = anchors_mask.astype(np.uint8)
+        anchors_area_time = time.time()
+        self.sparse_sum_time += sparse_sum - start
+        self.anchors_area_time += anchors_area_time - sparse_sum
         return anchors_mask
 
     def assign(self, gt_classes_all, gt_boxes_all, anchors_mask_all):

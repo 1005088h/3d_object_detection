@@ -12,7 +12,7 @@ from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
 # from networks.pointpillars import PointPillars
-from networks.pointpillars2 import PointPillars
+from networks.pointpillars4 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -283,7 +283,7 @@ def changeInfo(infos):
 
 def infer():
 
-    with open('configs/ntusl_20cm.json', 'r') as f:
+    with open('configs/ntusl_10cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
@@ -293,11 +293,13 @@ def infer():
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
     net.cuda()
+    '''
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
     latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
+    '''
     # net.half()
     net.eval()
 
@@ -310,20 +312,40 @@ def infer():
             infos += pickle.load(f)
     changeInfo(infos)
     dt_annos = []
-    time_elapse = 0.0
+    time_elapse, pre_time_avg, net_time_avg, post_time_avg = 0.0, 0.0, 0.0, 0.0
+    len_infos = len(infos)
     for idx, info in enumerate(infos):
         print('\ridx %d' % idx, end='')
         v_path = data_root / info['velodyne_path']
         points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
-        t = time.time()
+        start_time = time.time()
         example = infer_data.get(points)
+        pre_time = time.time()
         with torch.no_grad():
             preds_dict = net(example)
+            torch.cuda.synchronize()
+        net_time = time.time()
         dt_annos += inference.infer(example, preds_dict)
-        time_elapse += time.time() - t
+        post_time = time.time()
 
-    print("average time : %.5f" % (time_elapse / len(infos)))
+        pre_time_avg += pre_time - start_time
+        net_time_avg += net_time - pre_time
+        post_time_avg += post_time - net_time
+        time_elapse += post_time - start_time
 
+    print("\naverage time : \t\t\t%.5f" % (time_elapse / len_infos))
+    print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
+    print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
+    print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
+
+    print("voxel time : \t\t\t%.5f" % (infer_data.voxel_time / len_infos))
+    print("mask_time time : \t\t%.5f" % (infer_data.mask_time / len_infos))
+    print("convert_time time : \t%.5f" % (infer_data.convert_time / len_infos))
+
+    print("sparse_sum time : \t\t%.5f" % (anchor_assigner.sparse_sum_time / len_infos))
+    print("anchors_area time : \t%.5f" % (anchor_assigner.anchors_area_time / len_infos))
+
+    '''
     dt_path = Path(config['data_root']) / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
@@ -334,11 +356,11 @@ def infer():
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-
+    '''
 
 class PointPillarsNode:
     def __init__(self):
-        with open('configs/ntusl_20cm.json', 'r') as f:
+        with open('configs/ntusl_10cm.json', 'r') as f:
             config = json.load(f)
         device = torch.device("cuda:0")
         config['device'] = device
@@ -382,15 +404,27 @@ class PointPillarsNode:
             points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
             start_time = time.time()
             example = self.infer_data.get(points)
+            pre_time = time.time()
             with torch.no_grad():
                 preds_dict = self.net(example)
+            net_time = time.time()
             dt_annos += self.inference.infer(example, preds_dict)
-            dur = time.time() - start_time
-            time_elapse += dur
+            post_time = time.time()
+
+            pre_time_avg += pre_time - start_time
+            net_time_avg += net_time - pre_time
+            post_time_avg += post_time - net_time
+
+            time_elapse += post_time - start_time
+
         print("average time : %.5f" % (time_elapse / len_infos))
+        print("pre-processing time : %.5f" % (pre_time_avg / len_infos))
+        print("network time : %.5f" % (net_time_avg / len_infos))
+        print("post-processing time : %.5f" % (post_time_avg / len_infos))
+
 
 if __name__ == "__main__":
-    train()
+    # train()
+    infer()
     # evaluate()
     # PointPillarsNode().spin()
-    # infer()

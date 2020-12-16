@@ -18,14 +18,14 @@ from PyQt5.QtWidgets import (
 
 from skimage import io
 
-from bbox_plot import GLColor
+from viewer.bbox_plot import GLColor
 import json
 
 from framework import box_np_ops
 from eval.eval import bev_box_overlap
-from utils import remove_low_score
-from views import MatPlotLibView, KittiDrawControl, KittiPointCloudView
-from utils import Settings, riou3d_shapely
+from viewer.utils import remove_low_score
+from viewer.views import MatPlotLibView, KittiDrawControl, KittiPointCloudView
+from viewer.utils import Settings, riou3d_shapely
 from framework.anchor_assigner import AnchorAssigner
 from framework.voxel_generator import VoxelGenerator
 from framework.dataset import GenericDataset
@@ -50,7 +50,7 @@ class PCViewer(QMainWindow):
         self.gt_bbox = None
         self.classes = ["vehicle", "pedestrian", "cyclist"]
 
-        self.config_path = '../configs/ntusl_10cm.json'
+        self.config_path = 'configs/ntusl_10cm.json'
         self.dataset = None
         self.anchors = None
         self.augm = False

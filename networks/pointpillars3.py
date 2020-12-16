@@ -135,9 +135,9 @@ class RPN(nn.Module):
                  nn.ReLU()]
         model += [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
-                 nn.ReLU()]                 
-        model += [Resnet(num_filters[0], norm_layer, 1]
-        model += [Resnet(num_filters[0], norm_layer, 0]
+                 nn.ReLU()]
+        model += [Resnet2(num_filters[0], norm_layer, 1)]
+        model += [Resnet2(num_filters[0], norm_layer, 0)]
         self.block1 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
@@ -149,9 +149,9 @@ class RPN(nn.Module):
         model = [nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
-        model += [Resnet(num_filters[1], norm_layer, 1]
-        model += [Resnet(num_filters[1], norm_layer, 1]
-        model += [Resnet(num_filters[1], norm_layer, 0]
+        model += [Resnet2(num_filters[1], norm_layer, 1)]
+        model += [Resnet2(num_filters[1], norm_layer, 1)]
+        model += [Resnet2(num_filters[1], norm_layer, 0)]
         self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
@@ -163,9 +163,9 @@ class RPN(nn.Module):
         model = [nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
-        model += [Resnet(num_filters[2], norm_layer, 1]
-        model += [Resnet(num_filters[2], norm_layer, 1]
-        model += [Resnet(num_filters[2], norm_layer, 0]
+        model += [Resnet2(num_filters[2], norm_layer, 1)]
+        model += [Resnet2(num_filters[2], norm_layer, 1)]
+        model += [Resnet2(num_filters[2], norm_layer, 0)]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
@@ -329,7 +329,7 @@ class Resnet2(nn.Module):
 
     def __init__(self, dim, norm_layer, num_layer=1):
         ### Full pre-activation
-        super(Resnet, self).__init__()
+        super(Resnet2, self).__init__()
         conv_block = [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]
         for layer in range(num_layer):
             conv_block += [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]

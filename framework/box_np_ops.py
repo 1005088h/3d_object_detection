@@ -156,11 +156,42 @@ def corners_nd(dims, origin=0.5):
 
 @numba.jit(nopython=True)
 def sparse_sum_for_anchors_mask(coors, shape):
+
     ret = np.zeros(shape, dtype=np.float32)
     for i in range(coors.shape[0]):
         ret[coors[i, 0], coors[i, 1]] += 1
+
     return ret
 
+'''
+from numba import vectorize, float32
+@vectorize([float32(float32, float32)], target='cuda')
+def vector_add(x, y):
+    return x + y
+
+# @numba.jit(nopython=True)
+def cumsum(dense_voxel_map):
+    shape = dense_voxel_map.shape
+    for r in range(shape[0] - 1):
+        dense_voxel_map[r + 1, :] = vector_add(dense_voxel_map[r, :], dense_voxel_map[r + 1, :])
+
+    for c in range(shape[1] - 1):
+        dense_voxel_map[:, c + 1] = vector_add(dense_voxel_map[:, c], dense_voxel_map[:, c + 1])
+
+    return dense_voxel_map
+'''
+
+
+@numba.jit(nopython=True)
+def dense_map(dense_voxel_map):
+    shape = dense_voxel_map.shape
+    for r in range(shape[0] - 1):
+        dense_voxel_map[r + 1, :] += dense_voxel_map[r, :]
+
+    for c in range(shape[1] - 1):
+        dense_voxel_map[:, c + 1] += dense_voxel_map[:, c]
+
+    return dense_voxel_map
 
 @numba.jit(nopython=True)
 def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,

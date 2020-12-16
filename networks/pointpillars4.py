@@ -5,8 +5,6 @@ from torch.nn import Sequential
 import functools
 import time
 
-### ResNet full pre-activation + ConvPointNet
-
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
         super().__init__()
@@ -23,15 +21,14 @@ class PointNet(nn.Module):
         model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
-        self.pfn_layers = nn.Sequential(*model)
-        
-        model = [nn.Conv1d(self.out_channels, 1, kernel_size=1, padding=0, bias=False),
-                 nn.BatchNorm1d(self.out_channels),
-                 nn.ReLU(True)]
 
-        self.ConvPointNet = nn.Sequential(*model)
-        
-        
+        self.pfn_layers = nn.Sequential(*model)
+
+        model = [nn.Conv1d(10, 1, kernel_size=1, padding=0, bias=False),
+                 nn.BatchNorm1d(1),
+                 nn.ReLU(True)]
+        self.conv_pfn = nn.Sequential(*model)
+
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
         points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
@@ -45,8 +42,11 @@ class PointNet(nn.Module):
 
         # Combine together feature decorations
         features_ls = [voxels, f_cluster, f_center]
+
         features = torch.cat(features_ls, dim=-1)
 
+        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
+        # empty pillars remain set to zeros.
         num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
         max_point_per_voxel = features.shape[1]
         max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int, device=num_point_per_voxel.device).view(1, -1)
@@ -59,7 +59,7 @@ class PointNet(nn.Module):
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
         # x_max = torch.max(x, dim=1, keepdim=True)[0]
-        x_max = self.ConvPointNet(x)
+        x_max = self.conv_pfn(x)
         return x_max.squeeze()
 
 
@@ -115,6 +115,7 @@ class PointPillarsScatter(nn.Module):
 
         return batch_canvas
 
+
 class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
@@ -128,30 +129,33 @@ class RPN(nn.Module):
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
         self.out_plane = sum(num_upsample_filters)
-        
+
         model = [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
         model += [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
-                 norm_layer(num_filters[0]),
-                 nn.ReLU()]                 
-        model += [Resnet(num_filters[0], norm_layer, layer_nums[0])]
+                  norm_layer(num_filters[0]),
+                  nn.ReLU()]
+        model += [Resnet2(num_filters[0], norm_layer, 1)]
+        model += [Resnet2(num_filters[0], norm_layer, 0)]
         self.block1 = Sequential(*model)
 
-        model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0], stride=upsample_strides[0]),
+        model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0],
+                                    stride=upsample_strides[0]),
                  norm_layer(num_upsample_filters[0]),
                  nn.ReLU()]
         self.deconv1 = Sequential(*model)
 
-
         model = [nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
-        model += [Resnet(num_filters[0], norm_layer, layer_nums[1])]
+        model += [Resnet2(num_filters[1], norm_layer, 1)]
+        model += [Resnet2(num_filters[1], norm_layer, 1)]
+        model += [Resnet2(num_filters[1], norm_layer, 0)]
         self.block2 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
-                               stride=upsample_strides[1]),
+                                    stride=upsample_strides[1]),
                  norm_layer(num_upsample_filters[1]),
                  nn.ReLU()]
         self.deconv2 = Sequential(*model)
@@ -159,11 +163,13 @@ class RPN(nn.Module):
         model = [nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
-        model += [Resnet(num_filters[0], norm_layer, layer_nums[2])]
+        model += [Resnet2(num_filters[2], norm_layer, 1)]
+        model += [Resnet2(num_filters[2], norm_layer, 1)]
+        model += [Resnet2(num_filters[2], norm_layer, 0)]
         self.block3 = Sequential(*model)
 
         model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
-                               stride=upsample_strides[2]),
+                                    stride=upsample_strides[2]),
                  norm_layer(num_upsample_filters[2]),
                  nn.ReLU()]
         self.deconv3 = Sequential(*model)
@@ -275,7 +281,7 @@ class PointPillars(nn.Module):
                                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.heads = MultiHead(self.rpn.out_plane)
+        self.heads = MultiHead(self.rpn.out_plane)#
         # self.heads = SingleHead(self.rpn.out_plane)
     def forward(self, example):
 
@@ -306,7 +312,6 @@ class SELayer(nn.Module):
 
 class Resnet(nn.Module):
     def __init__(self, dim, norm_layer):
-
         super(Resnet, self).__init__()
         conv_block = []
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=1), norm_layer(dim), nn.ReLU(True)]
@@ -318,18 +323,18 @@ class Resnet(nn.Module):
         x = x + self.conv_block(x)
         out = self.relu(x)
         return out
-        
+
+
 class Resnet2(nn.Module):
 
     def __init__(self, dim, norm_layer, num_layer=1):
         ### Full pre-activation
-        super(Resnet, self).__init__()
+        super(Resnet2, self).__init__()
         conv_block = [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]
         for layer in range(num_layer):
             conv_block += [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]
         self.conv_block = nn.Sequential(*conv_block)
 
     def forward(self, x):
-    
         out = x + self.conv_block(x)
         return out

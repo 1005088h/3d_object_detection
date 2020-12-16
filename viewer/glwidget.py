@@ -13,7 +13,7 @@ from pyqtgraph.opengl.GLGraphicsItem import GLGraphicsItem
 
 import OpenGL.GL as pygl
 
-from bbox_plot import GLColor
+from viewer.bbox_plot import GLColor
 
 class GLLabelItem(GLGraphicsItem):
     def __init__(self, pos=None, text=None, color=None, font=QtGui.QFont()):

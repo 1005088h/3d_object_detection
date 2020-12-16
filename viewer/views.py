@@ -1,9 +1,8 @@
-import control_panel as panel
-import bbox_plot
-from bbox_plot import GLColor
+from viewer import control_panel as panel
+from viewer import bbox_plot
+from viewer.bbox_plot import GLColor
 from framework import box_np_ops
 import numpy as np
-
 
 from matplotlib.backends.backend_qt5agg import \
     FigureCanvasQTAgg as FigureCanvas
@@ -11,7 +10,7 @@ from matplotlib.figure import Figure
 
 from PyQt5.QtWidgets import QSizePolicy
 
-from glwidget import KittiGLViewWidget
+from viewer.glwidget import KittiGLViewWidget
 class KittiPointCloudView(KittiGLViewWidget):
     def __init__(self,
                  config,

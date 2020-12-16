@@ -5,6 +5,8 @@ from torch.nn import Sequential
 import functools
 import time
 
+### Original ResNet, at first downsampling layer
+
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
         super().__init__()
@@ -22,13 +24,13 @@ class PointNet(nn.Module):
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
         self.pfn_layers = nn.Sequential(*model)
-
+        '''
         model = [nn.Conv1d(self.out_channels, 1, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
 
         self.pfn_layers2 = nn.Sequential(*model)
-
+        '''
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
         points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
@@ -58,8 +60,8 @@ class PointNet(nn.Module):
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
-        # x_max = torch.max(x, dim=1, keepdim=True)[0]
-        x_max = self.pfn_layers2(x)
+        x_max = torch.max(x, dim=1, keepdim=True)[0]
+        # x_max = self.pfn_layers2(x)
         return x_max.squeeze()
 
 

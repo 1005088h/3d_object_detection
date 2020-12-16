@@ -84,10 +84,10 @@ class GenericDataset(Dataset):
     def __getitem__(self, idx):
         info = self.infos[idx]
         # read input
-        t = time.time()
+
         v_path = self.data_root / info['velodyne_path']
         points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self.num_point_features])
-        self.load_t += (time.time() - t)
+
 
         # read calib
         rect = info['calib/R0_rect'].astype(np.float32)
@@ -140,14 +140,14 @@ class GenericDataset(Dataset):
             np.random.shuffle(points)
 
         self.points = points
-        t = time.time()
+
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
 
         grid_size = self.grid_size
         voxel_size = self.voxel_generator.voxel_size
         offset = self.voxel_generator.offset
         anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset)
-        self.voxelization_t += (time.time() - t)
+
         example['voxels'] = voxels
         example['coordinates'] = coors
         example['num_points_per_voxel'] = num_points_per_voxel
@@ -197,12 +197,23 @@ class InferData:
         self.grid_size = config['grid_size']
         self.dtype = dtype
 
+        self.voxel_time = 0.0
+        self.mask_time = 0.0
+        self.convert_time = 0.0
     def get(self, points):
+        start = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
+        voxel_time = time.time()
         anchors_mask = self.anchor_assigner.create_mask(coors, self.grid_size, self.voxel_generator.voxel_size,
                                                         self.voxel_generator.offset)
         anchors_mask = anchors_mask[np.newaxis, :]
+        mask_time = time.time()
         example = {'voxels': voxels, 'coordinates': coors, 'num_points_per_voxel': num_points_per_voxel,
                    'anchors_mask': anchors_mask}
         example = example_convert_to_torch(example, self.dtype)
+        convert_time = time.time()
+
+        self.voxel_time += voxel_time - start
+        self.mask_time += mask_time - voxel_time
+        self.convert_time += convert_time - mask_time
         return example
