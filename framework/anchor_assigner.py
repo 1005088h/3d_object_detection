@@ -109,11 +109,21 @@ class AnchorAssigner:
     def create_mask(self, coors, grid_size, voxel_size, offset):
         anchors_bv = self.anchors_bv
         start = time.time()
-        dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
-        # dense_voxel_map = box_np_ops.cumsum(dense_voxel_map)
-        dense_voxel_map = dense_voxel_map.cumsum(0)
-        dense_voxel_map = dense_voxel_map.cumsum(1)
+
+        #dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
+        #dense_voxel_map = dense_voxel_map.cumsum(0)
+        #dense_voxel_map = dense_voxel_map.cumsum(1)
+        # dense_voxel_map = box_np_ops.cumsum_gpu(dense_voxel_map)
+
+
+        dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask_gpu(coors, tuple(grid_size[:-1]))
+
+
+        #comparison = dense_voxel_map1 == dense_voxel_map
+        #identical = comparison.all()
+        #print(identical)
         sparse_sum = time.time()
+
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
 
         anchors_mask = anchors_area > 0

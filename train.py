@@ -11,8 +11,8 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-# from networks.pointpillars import PointPillars
-from networks.pointpillars4 import PointPillars
+from networks.pointpillars5 import PointPillars
+# from networks.pointpillars4 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -20,7 +20,7 @@ from eval.eval import get_official_eval_result
 
 
 def train():
-    with open('configs/ntusl_10cm.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
 
     device = torch.device("cuda:0")
@@ -283,7 +283,7 @@ def changeInfo(infos):
 
 def infer():
 
-    with open('configs/ntusl_10cm.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
@@ -360,7 +360,7 @@ def infer():
 
 class PointPillarsNode:
     def __init__(self):
-        with open('configs/ntusl_10cm.json', 'r') as f:
+        with open('configs/ntusl_20cm.json', 'r') as f:
             config = json.load(f)
         device = torch.device("cuda:0")
         config['device'] = device
@@ -424,7 +424,7 @@ class PointPillarsNode:
 
 
 if __name__ == "__main__":
-    # train()
-    infer()
+    train()
+    # infer()
     # evaluate()
     # PointPillarsNode().spin()

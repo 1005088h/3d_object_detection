@@ -24,13 +24,6 @@ class PointNet(nn.Module):
 
         self.pfn_layers = nn.Sequential(*model)
 
-        model = [nn.Conv1d(10, 10, kernel_size=3, padding=1, bias=False),
-                 nn.BatchNorm1d(10),
-                 nn.ReLU(True)]
-        model += [nn.Conv1d(10, 1, kernel_size=3, padding=1, bias=False),
-                 nn.BatchNorm1d(1),
-                 nn.ReLU(True)]
-        self.conv_pfn = nn.Sequential(*model)
 
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
@@ -61,8 +54,7 @@ class PointNet(nn.Module):
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
-        # x_max = torch.max(x, dim=1, keepdim=True)[0]
-        x_max = self.conv_pfn(x)
+        x_max = torch.max(x, dim=1, keepdim=True)[0]
         return x_max.squeeze()
 
 
@@ -136,9 +128,6 @@ class RPN(nn.Module):
         model = [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
                  nn.ReLU()]
-        model += [nn.Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
-                  norm_layer(num_filters[0]),
-                  nn.ReLU()]
         model += [Resnet2(num_filters[0], norm_layer, 1)]
         model += [Resnet2(num_filters[0], norm_layer, 0)]
         self.block1 = Sequential(*model)
