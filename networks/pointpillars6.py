@@ -1,9 +1,9 @@
-
 import torch
 from torch import nn
 from torch.nn import Sequential
 import functools
 import time
+
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -23,7 +23,6 @@ class PointNet(nn.Module):
                  nn.ReLU(True)]
 
         self.pfn_layers = nn.Sequential(*model)
-
 
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
@@ -45,7 +44,8 @@ class PointNet(nn.Module):
         # empty pillars remain set to zeros.
         num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
         max_point_per_voxel = features.shape[1]
-        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int, device=num_point_per_voxel.device).view(1, -1)
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
         mask = num_point_per_voxel.int() > max_point_per_voxel
         # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
         mask = torch.unsqueeze(mask, -1).type_as(features)
@@ -99,8 +99,6 @@ class PointPillarsScatter(nn.Module):
 
             # Append to a list for later stacking.
             batch_canvas.append(canvas)
-
-
 
         # Stack to 3-dim tensor (batch-size, nchannels, nrows*ncols)
         batch_canvas = torch.stack(batch_canvas, 0)
@@ -176,6 +174,7 @@ class RPN(nn.Module):
         x = torch.cat([up1, up2, up3], dim=1)
         return x
 
+
 class SingleHead(nn.Module):
 
     def __init__(self, in_plane):
@@ -196,17 +195,92 @@ class SingleHead(nn.Module):
         ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
         ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
 
-        cls_preds =  ped_cls_preds
-        box_preds =  ped_box_preds
+        cls_preds = ped_cls_preds
+        box_preds = ped_box_preds
         dir_cls_preds = ped_dir_preds
 
         pred_dict = {
             "cls_preds": cls_preds,
             "box_preds": box_preds,
-            "dir_preds": dir_cls_preds
+            "dir_cls_preds": dir_cls_preds
         }
 
         return pred_dict
+
+
+class SingleHeads(nn.Module):
+
+    def __init__(self, in_plane):
+        super().__init__()
+        self.box_code_size = 7
+
+        num_veh_size = 3
+        num_veh_rot = 2
+        self.num_veh_anchor_per_loc = num_veh_size * num_veh_rot
+
+        num_ped_size = 1
+        num_ped_rot = 1
+        self.num_ped_anchor_per_loc = num_ped_size * num_ped_rot
+
+        num_cyc_size = 1
+        num_cyc_rot = 2
+        self.num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
+
+        num_anchor_per_loc = self.num_veh_anchor_per_loc + self.num_ped_anchor_per_loc + self.num_cyc_anchor_per_loc
+
+        self.conv_cls = nn.Conv2d(in_plane, num_anchor_per_loc, 1)
+        self.conv_box = nn.Conv2d(in_plane, num_anchor_per_loc * self.box_code_size, 1)
+        self.conv_dir = nn.Conv2d(in_plane, num_anchor_per_loc * 2, 1)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+
+        cls_preds = self.conv_cls(x)
+        start = 0
+        end = self.num_veh_anchor_per_loc
+        veh_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        start = end
+        end = start + self.num_ped_anchor_per_loc
+        ped_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        start = end
+        end = start + self.num_cyc_anchor_per_loc
+        cyc_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+
+
+        box_preds = self.conv_box(x)
+        start = 0
+        end = self.num_veh_anchor_per_loc * self.box_code_size
+        veh_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        start = end
+        end = start + self.num_ped_anchor_per_loc * self.box_code_size
+        ped_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        start = end
+        end = start + self.num_cyc_anchor_per_loc * self.box_code_size
+        cyc_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+
+        dir_preds = self.conv_dir(x)
+        start = 0
+        end = self.num_veh_anchor_per_loc * 2
+        veh_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        start = end
+        end = start + self.num_ped_anchor_per_loc * 2
+        ped_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        start = end
+        end = start + self.num_cyc_anchor_per_loc * 2
+        cyc_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
+        box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
+        dir_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
+
+        pred_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        return pred_dict
+
 
 class MultiHead(nn.Module):
 
@@ -251,15 +325,16 @@ class MultiHead(nn.Module):
 
         cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
         box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
-        dir_cls_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
+        dir_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
 
         pred_dict = {
             "cls_preds": cls_preds,
             "box_preds": box_preds,
-            "dir_preds": dir_cls_preds
+            "dir_preds": dir_preds
         }
 
         return pred_dict
+
 
 class PointPillars(nn.Module):
 
@@ -269,12 +344,12 @@ class PointPillars(nn.Module):
         self.pillar_point_net = PointNet(config['num_point_features'], config['voxel_size'], config['detection_offset'])
         num_rpn_input_filters = self.pillar_point_net.out_channels
         self.middle_feature_extractor = PointPillarsScatter(batch_size=config['batch_size'],
-                                                               output_shape=config['grid_size'],
-                                                               num_input_features=num_rpn_input_filters)
+                                                            output_shape=config['grid_size'],
+                                                            num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.heads = MultiHead(self.rpn.out_plane)#
-        # self.heads = SingleHead(self.rpn.out_plane)
+        # self.heads = MultiHead(self.rpn.out_plane)
+        self.heads = SingleHeads(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
         self.rpn_feature_time = 0.0
@@ -302,6 +377,7 @@ class PointPillars(nn.Module):
         self.heads_time += heads_time - rpn_feature_time
 
         return preds_dict
+
 
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):

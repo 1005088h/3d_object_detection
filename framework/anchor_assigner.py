@@ -3,7 +3,7 @@ import time
 import numpy as np
 import framework.box_np_ops as box_np_ops
 
-
+from numba import cuda
 
 class AnchorAssigner:
     def __init__(self, config):
@@ -42,9 +42,6 @@ class AnchorAssigner:
         #self.class_anchor = {}
         start_index = 0
 
-        self.sparse_sum_time = 0.0
-        self.anchors_area_time = 0.0
-
         for cls in self.detect_class:
             self.sizes = config[cls]["sizes"]
             self.rotations = config[cls]["rotations"]
@@ -66,14 +63,20 @@ class AnchorAssigner:
 
             end_index = start_index + num_anchors
             self.class_masks[cls] = [start_index, end_index]
-            #self.class_anchor[cls] = 0
-            start_index += num_anchors
+            start_index = end_index
 
         self.anchors = np.concatenate(self.anchors)
         self.anchors_bv = np.concatenate(self.anchors_bv)
         self.matched_threshold = np.concatenate(self.matched_threshold)
         self.unmatched_threshold = np.concatenate(self.unmatched_threshold)
         #self.names = np.concatenate(self.names)
+
+        voxel_size = np.array(config['voxel_size'], dtype=np.float32)
+        offset = np.array(config['detection_offset'], dtype=np.float32)
+        self.anchors_coors = box_np_ops.get_anchor_coor(self.anchors_bv, voxel_size, offset, self.grid_size)
+        self.anchors_coors_cuda = cuda.to_device(self.anchors_coors)
+        anchors_mask = np.zeros(self.anchors_bv.shape[0], dtype=np.bool)
+        self.anchors_mask_cuda = cuda.to_device(anchors_mask)
 
     def generate(self):
         x_stride, y_stride, z_stride = self.anchor_strides
@@ -107,29 +110,22 @@ class AnchorAssigner:
         return ret
 
     def create_mask(self, coors, grid_size, voxel_size, offset):
+        '''
+        ### CPU
         anchors_bv = self.anchors_bv
-        start = time.time()
-
-        #dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1]))
-        #dense_voxel_map = dense_voxel_map.cumsum(0)
-        #dense_voxel_map = dense_voxel_map.cumsum(1)
-        # dense_voxel_map = box_np_ops.cumsum_gpu(dense_voxel_map)
-
-
-        dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask_gpu(coors, tuple(grid_size[:-1]))
-
-
-        #comparison = dense_voxel_map1 == dense_voxel_map
-        #identical = comparison.all()
-        #print(identical)
-        sparse_sum = time.time()
-
+        dense_voxel_map = box_np_ops.sparse_sum_for_anchors_mask(coors, tuple(grid_size[:-1])) # dense_voxel_map = box_np_ops.cumsum_gpu(dense_voxel_map)
+        dense_voxel_map = dense_voxel_map.cumsum(0)
+        dense_voxel_map = dense_voxel_map.cumsum(1)
         anchors_area = box_np_ops.fused_get_anchors_area(dense_voxel_map, anchors_bv, voxel_size, offset, grid_size)
-
-        anchors_mask = anchors_area > 0
-        anchors_area_time = time.time()
-        self.sparse_sum_time += sparse_sum - start
-        self.anchors_area_time += anchors_area_time - sparse_sum
+        anchors_mask_cpu = anchors_area > 0
+        '''
+        ### CPU
+        anchors_mask = box_np_ops.fused_get_anchors_mask_gpu(coors, tuple(grid_size[:-1]), self.anchors_coors_cuda, self.anchors_mask_cuda)
+        '''
+        comparison = anchors_mask == anchors_mask_cpu
+        identical = comparison.all()
+        print(identical)
+        '''
         return anchors_mask
 
     def assign(self, gt_classes_all, gt_boxes_all, anchors_mask_all):

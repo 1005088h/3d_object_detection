@@ -157,13 +157,13 @@ class GenericDataset(Dataset):
         if self.training:
             gt_classes = example['annos']['gt_classes']
             gt_boxes = example['annos']['gt_boxes']
-            label, bbox_targets, bbox_outside_weights, dir_cls_targets = self.anchor_assigner.assign(gt_classes,
-                                                                                                     gt_boxes,
-                                                                                                     anchors_mask)
+            label, bbox_targets, bbox_outside_weights, dir_targets = self.anchor_assigner.assign(gt_classes,
+                                                                                                 gt_boxes,
+                                                                                                 anchors_mask)
 
             example['labels'] = label
             example['bbox_targets'] = bbox_targets
-            example['dir_cls_targets'] = dir_cls_targets
+            example['dir_targets'] = dir_targets
             example['bbox_outside_weights'] = bbox_outside_weights
 
         return example
@@ -191,6 +191,7 @@ class GenericDataset(Dataset):
 
 
 class InferData:
+
     def __init__(self, config, voxel_generator, anchor_assigner, dtype=torch.float32):
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
@@ -200,6 +201,7 @@ class InferData:
         self.voxel_time = 0.0
         self.mask_time = 0.0
         self.convert_time = 0.0
+
     def get(self, points):
         start = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)

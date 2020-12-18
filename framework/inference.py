@@ -35,7 +35,7 @@ class Inference:
         batch_box_preds = box_torch_ops.box_decode(batch_box_preds, batch_anchors)
 
         batch_anchors_mask = example["anchors_mask"]
-        batch_dir_preds = preds_dict["dir_cls_preds"]
+        batch_dir_preds = preds_dict["dir_preds"]
         batch_dir_preds = batch_dir_preds.view(batch_size, -1, 2)
 
         for box_preds_all, cls_preds_all, dir_preds_all, a_mask_all in zip(

@@ -99,8 +99,6 @@ class PointPillarsScatter(nn.Module):
             # Append to a list for later stacking.
             batch_canvas.append(canvas)
 
-
-
         # Stack to 3-dim tensor (batch-size, nchannels, nrows*ncols)
         batch_canvas = torch.stack(batch_canvas, 0)
 

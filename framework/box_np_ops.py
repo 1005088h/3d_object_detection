@@ -155,21 +155,6 @@ def corners_nd(dims, origin=0.5):
 
 from numba import cuda
 
-@cuda.jit
-def cumx_gpu(a):
-    x = cuda.grid(1)
-    if x < a.shape[1]:
-        for r in range(a.shape[0] - 1):
-            a[r + 1][x] = a[r][x] + a[r + 1][x]
-
-
-@cuda.jit
-def cumy_gpu(a):
-    x = cuda.grid(1)
-    if x < a.shape[0]:
-        for c in range(a.shape[1] - 1):
-            a[x][c + 1] = a[x][c] + a[x][c + 1]
-
 @numba.jit(nopython=True)
 def sparse_sum_for_anchors_mask(coors, shape):
     ret = np.zeros(shape, dtype=np.float32)
@@ -183,6 +168,31 @@ def init_map_gpu(dense_map_cuda, coors_cuda):
     x = cuda.grid(1)
     if x < coors_cuda.shape[0]:
         dense_map_cuda[coors_cuda[x, 0], coors_cuda[x, 1]] += 1
+
+@cuda.jit
+def cumx_gpu(dense_map_cuda):
+
+    x = cuda.grid(1)
+    if x < dense_map_cuda.shape[1]:
+        for r in range(dense_map_cuda.shape[0] - 1):
+            dense_map_cuda[r + 1][x] = dense_map_cuda[r][x] + dense_map_cuda[r + 1][x]
+
+@cuda.jit
+def cumy_gpu(dense_map_cuda):
+
+    x = cuda.grid(1)
+    if x < dense_map_cuda.shape[0]:
+        for c in range(dense_map_cuda.shape[1] - 1):
+            dense_map_cuda[x][c + 1] = dense_map_cuda[x][c] + dense_map_cuda[x][c + 1]
+
+@cuda.jit
+def cumx_gpu(dense_map_cuda):
+
+    x = cuda.grid(1)
+    if x < dense_map_cuda.shape[1]:
+        for r in range(dense_map_cuda.shape[0] - 1):
+            dense_map_cuda[r + 1][x] = dense_map_cuda[r][x] + dense_map_cuda[r + 1][x]
+
 
 def sparse_sum_for_anchors_mask_gpu(coors, shape):
     #stream = cuda.stream()
@@ -198,59 +208,49 @@ def sparse_sum_for_anchors_mask_gpu(coors, shape):
     block = int(np.amax(shape) // threadperblock) + 1
     cumx_gpu[block, threadperblock](dense_map_cuda)
     cumy_gpu[block, threadperblock](dense_map_cuda)
-    dense_map = dense_map_cuda.copy_to_host()
-    return dense_map
+    # dense_voxel_map = dense_map_cuda.copy_to_host()
+    return dense_map_cuda
 
-def cumsum_gpu(a):
-    threadperblock = 1024
-    block = int(np.amax(a.shape) // threadperblock) + 1
-    a = cuda.to_device(a)
-    cumx_gpu[block, threadperblock](a)
-    cumy_gpu[block, threadperblock](a)
-    a = a.copy_to_host()
-    return a
-
-
-@numba.jit(nopython=True)
-def dense_map(dense_voxel_map):
-    shape = dense_voxel_map.shape
-    for r in range(shape[0] - 1):
-        dense_voxel_map[r + 1, :] += dense_voxel_map[r, :]
-
-    for c in range(shape[1] - 1):
-        dense_voxel_map[:, c + 1] += dense_voxel_map[:, c]
-
-    return dense_voxel_map
-
-@numba.jit(nopython=True)
-def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
-                           grid_size):
-    anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
-    grid_size_x = grid_size[0] - 1
-    grid_size_y = grid_size[1] - 1
-    N = anchors_bv.shape[0]
-    ret = np.zeros(N, dtype=dense_map.dtype)
-
-    for i in range(N):
-        anchor_coor[0] = np.floor((anchors_bv[i, 0] - offset[0]) / stride[0])
-        anchor_coor[1] = np.floor((anchors_bv[i, 1] - offset[1]) / stride[1])
-        anchor_coor[2] = np.floor((anchors_bv[i, 2] - offset[0]) / stride[0])
-        anchor_coor[3] = np.floor((anchors_bv[i, 3] - offset[1]) / stride[1])
-        anchor_coor[0] = max(anchor_coor[0], 0)
-        anchor_coor[1] = max(anchor_coor[1], 0)
-        anchor_coor[2] = min(anchor_coor[2], grid_size_x)
-        anchor_coor[3] = min(anchor_coor[3], grid_size_y)
-        minx, miny, maxx, maxy = anchor_coor
-        ID = dense_map[maxx, maxy]
-        IA = dense_map[minx, miny]
-        IB = dense_map[maxx, miny]
-        IC = dense_map[minx, maxy]
-        ret[i] = ID - IB - IC + IA
-
-    return ret
-
-'''
 @cuda.jit
+def get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda):
+    N = anchor_coor_cuda.shape[0]
+    x = cuda.grid(1)
+    if x < N:
+        minx, miny, maxx, maxy = anchor_coor_cuda[x]
+        ID = dense_map_cuda[maxx, maxy]
+        IA = dense_map_cuda[minx, miny]
+        IB = dense_map_cuda[maxx, miny]
+        IC = dense_map_cuda[minx, maxy]
+        anchors_mask_cuda[x] = (ID - IB - IC + IA) > 0
+'''
+def fused_get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda):
+    threadperblock = 1024
+    block = int(anchor_coor_cuda.shape[0] // threadperblock) + 1
+    get_anchors_mask_gpu[block, threadperblock](anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda)
+    anchors_mask = anchors_mask_cuda.copy_to_host()
+    return anchors_mask
+'''
+
+def fused_get_anchors_mask_gpu(coors, shape, anchor_coors_cuda, anchors_mask_cuda):
+    coors_cuda = cuda.to_device(coors)
+    dense_map = np.zeros(shape, dtype=np.float32)
+    dense_map_cuda = cuda.to_device(dense_map)
+
+    threadperblock = 256
+    block = int(coors.shape[0] // threadperblock) + 1
+    init_map_gpu[block, threadperblock](dense_map_cuda, coors_cuda)
+
+    block = int(np.amax(shape) // threadperblock) + 1
+    cumx_gpu[block, threadperblock](dense_map_cuda)
+    cumy_gpu[block, threadperblock](dense_map_cuda)
+
+    threadperblock = 1024
+    block = int(anchor_coors_cuda.shape[0] // threadperblock) + 1
+    get_anchors_mask_gpu[block, threadperblock](anchor_coors_cuda, dense_map_cuda, anchors_mask_cuda)
+    anchors_mask = anchors_mask_cuda.copy_to_host()
+    return anchors_mask
+
+@numba.jit(nopython=True)
 def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
                            grid_size):
     anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
@@ -258,6 +258,7 @@ def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
     grid_size_y = grid_size[1] - 1
     N = anchors_bv.shape[0]
     ret = np.zeros(N, dtype=dense_map.dtype)
+
     for i in range(N):
         anchor_coor[0] = np.floor((anchors_bv[i, 0] - offset[0]) / stride[0])
         anchor_coor[1] = np.floor((anchors_bv[i, 1] - offset[1]) / stride[1])
@@ -275,7 +276,30 @@ def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
         ret[i] = ID - IB - IC + IA
 
     return ret
-'''
+
+
+
+
+
+@numba.jit(nopython=True)
+def get_anchor_coor(anchors_bv, stride, offset, grid_size):
+    anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
+    grid_size_x = grid_size[0] - 1
+    grid_size_y = grid_size[1] - 1
+    N = anchors_bv.shape[0]
+    ret = np.zeros(anchors_bv.shape, dtype=np.int32)
+
+    for i in range(N):
+        anchor_coor[0] = np.floor((anchors_bv[i, 0] - offset[0]) / stride[0])
+        anchor_coor[1] = np.floor((anchors_bv[i, 1] - offset[1]) / stride[1])
+        anchor_coor[2] = np.floor((anchors_bv[i, 2] - offset[0]) / stride[0])
+        anchor_coor[3] = np.floor((anchors_bv[i, 3] - offset[1]) / stride[1])
+        ret[i, 0] = max(anchor_coor[0], 0)
+        ret[i, 1] = max(anchor_coor[1], 0)
+        ret[i, 2] = min(anchor_coor[2], grid_size_x)
+        ret[i, 3] = min(anchor_coor[3], grid_size_y)
+    return ret
+
 def rbbox2d_to_near_bbox(rbboxes):
     """convert rotated bbox to nearest 'standing' or 'lying' bbox.
     Args:

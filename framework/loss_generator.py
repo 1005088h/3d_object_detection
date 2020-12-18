@@ -53,9 +53,9 @@ class LossGenerator:
         cls_loss_reduced = cls_loss.sum() / batch_size * self._cls_loss_weight
         loss = loc_loss_reduced + cls_loss_reduced
 
-        dir_cls_targets = torch.from_numpy(example['dir_cls_targets']).cuda()
+        dir_cls_targets = torch.from_numpy(example['dir_targets']).cuda()
         dir_cls_targets = one_hot(dir_cls_targets, 2)
-        dir_logits = preds_dict["dir_cls_preds"].view(batch_size, -1, 2)
+        dir_logits = preds_dict["dir_preds"].view(batch_size, -1, 2)
         weights = (labels > 0).type_as(dir_logits)
         weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
         dir_loss = self.dir_loss_type.compute_loss(dir_logits, dir_cls_targets, weights=weights)
