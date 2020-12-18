@@ -11,6 +11,7 @@ class AnchorAssigner:
         self.detect_class = config['detect_class']
         config["vehicle"] = {}
         config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
+        # config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8]]
         config["vehicle"]["rotations"] = [0, 1.5707963267948966]
         config["vehicle"]["matched_threshold"] = 0.6
         config["vehicle"]["unmatched_threshold"] = 0.45

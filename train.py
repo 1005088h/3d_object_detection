@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars5 import PointPillars
+from networks.pointpillars7 import PointPillars
 # from networks.pointpillars4 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -31,7 +31,8 @@ def train():
     metrics = Metric()
     inference = Inference(config, anchor_assigner)
 
-    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=True)
+    train_dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True,
+                                   augm=True)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config['batch_size'],
@@ -55,7 +56,7 @@ def train():
 
     net = PointPillars(config)
     net.to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate']) # AdamW
+    optimizer = torch.optim.Adam(net.parameters(), lr=config['learning_rate'])  # AdamW
     step_num = 0
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
@@ -114,12 +115,12 @@ def train():
             torch.save({'step': step,
                         'model_state_dict': net.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict()},
-                        latest_model_path)
+                       latest_model_path)
             step_model_path = os.path.join(model_path, str(step) + '.pth')
             torch.save({'step': step,
                         'model_state_dict': net.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict()},
-                        step_model_path)
+                       step_model_path)
             print("Model saved")
 
         if step % display_step == 0:
@@ -141,7 +142,7 @@ def train():
             eval_total = len(eval_dataloader)
             for count, example in enumerate(eval_dataloader, start=1):
                 print('\r%d / %d' % (count, eval_total), end='')
-                example = example_convert_to_torch(example)
+                example = example_convert_to_torch(example, device=device)
                 preds_dict = net(example)
                 dt_annos += inference.infer(example, preds_dict)
             t = (time.time() - t) / len(eval_dataloader)
@@ -149,13 +150,14 @@ def train():
 
             gt_annos = copy.deepcopy(eval_annos)
 
-            eval_classes = ["vehicle", "pedestrian", "cyclist"] #["vehicle", "pedestrian", "cyclist"]
+            eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
             APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
             log_str = '\nStep: %d%s' % (step, eval_str)
             print(log_str)
             with open(log_file, 'a+') as f:
                 f.write(log_str)
             net.train()
+
 
 def changeInfo(infos):
     for idx, info in enumerate(infos):
@@ -176,8 +178,8 @@ def changeInfo(infos):
             cyclist_mask = bicycle_mask | motorbike_mask
             info['annos']['name'][cyclist_mask] = "cyclist"
 
-def infer():
 
+def infer():
     with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
@@ -256,6 +258,7 @@ def infer():
     print(eval_str)
     '''
 
+
 class PointPillarsNode:
     def __init__(self):
         with open('configs/ntusl_20cm.json', 'r') as f:
@@ -322,8 +325,8 @@ class PointPillarsNode:
 
 
 if __name__ == "__main__":
-    train()
-    # infer()
+    # train()
+    infer()
     # PointPillarsNode().spin()
 
 '''
