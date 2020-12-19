@@ -716,6 +716,18 @@ def corner_to_standup_nd_jit(boxes_corner):
     return result
 
 
+def corner_to_standup_nd(boxes_corner):
+
+    x = boxes_corner[:, :, 0]
+    y = boxes_corner[:, :, 1]
+    x_min = np.min(x, axis=1, keepdims=True)
+    y_min = np.min(y, axis=1, keepdims=True)
+    x_max = np.max(x, axis=1, keepdims=True)
+    y_max = np.max(y, axis=1, keepdims=True)
+    standup_boxes = np.concatenate([x_min, y_min, x_max, y_max], axis=-1)
+    return standup_boxes
+
+
 '''    
 def riou_cc(rbboxes, qrbboxes, standup_thresh=0.0):
     # less than 50ms when used in second one thread. 10x slower than gpu

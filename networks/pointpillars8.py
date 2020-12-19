@@ -27,6 +27,8 @@ class PointNet(nn.Module):
                  BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
 
+
+
         self.pfn_layers = nn.Sequential(*model)
 
     def forward(self, voxels, num_point_per_voxel, coors):
@@ -384,7 +386,7 @@ class PointPillars(nn.Module):
                                                             num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.heads = MultiHead(self.rpn.out_plane)
+        self.heads = MultiHeads(self.rpn.out_plane)
         # self.heads = SingleHead(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
