@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8 import PointPillars
+from networks.pointpillars5 import PointPillars
 # from networks.pointpillars4 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -189,14 +189,14 @@ def infer():
     inference = Inference(config, anchor_assigner)
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
-    net.cuda()
-    '''
+    net.to(device)
+
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
     latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
-    '''
+
     # net.half()
     net.eval()
 
@@ -223,10 +223,13 @@ def infer():
             torch.cuda.synchronize()
         net_time = time.time()
         # anno1 = inference.infer(example, preds_dict)
-        anno2 = inference.infer2(example, preds_dict)
-        # comparison = anno1[0]["score"] == anno2[0]["score"]
-        # print(comparison.all())
 
+        dt_annos += inference.infer_gpu(example, preds_dict)
+        '''
+        comparsion = np.fabs(anno1[0]["location"] - anno2[0]["location"])
+        comparsion = comparsion.max()
+        print('\ncomparsion max: ', comparsion)
+        '''
         post_time = time.time()
 
         pre_time_avg += pre_time - start_time
@@ -245,11 +248,8 @@ def infer():
 
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
 
-    '''
-    print("voxel time : \t\t\t%.5f" % (infer_data.voxel_time / len_infos))
-    print("mask_time time : \t\t%.5f" % (infer_data.mask_time / len_infos))
-    print("convert_time time : \t%.5f" % (infer_data.convert_time / len_infos))
-    
+
+
     dt_path = Path(config['data_root']) / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
@@ -260,7 +260,7 @@ def infer():
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-    '''
+
 
 
 class PointPillarsNode:

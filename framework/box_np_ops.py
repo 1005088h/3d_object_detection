@@ -2,6 +2,7 @@ import numba
 import numpy as np
 import copy
 
+
 def filter_gt_box_outside_range(gt_boxes, limit_range):
     """remove gtbox outside training range.
     this function should be applied after other prep functions
@@ -18,7 +19,7 @@ def filter_gt_box_outside_range(gt_boxes, limit_range):
     return np.any(ret.reshape(-1, 4), axis=1)
 
 
-#@numba.jit(forceobj=True) Numba not helpful for this function
+# @numba.jit(forceobj=True) Numba not helpful for this function
 def points_in_convex_polygon_jit(points, polygon, clockwise=True):
     """check points is in 2d convex polygons. True when point in polygon
     Args:
@@ -64,7 +65,7 @@ def minmax_to_corner_2d(minmax_box):
 
 def rotation_2d(points, angles):
     """rotation 2d points based on origin point clockwise when angle positive.
-    
+
     Args:
         points (float array, shape=[N, point_size, 2]): points to be rotated.
         angles (float array, shape=[N]): rotation angle.
@@ -82,12 +83,12 @@ def rotation_2d(points, angles):
 def center_to_corner_box2d(centers, dims, angles=None, origin=0.5):
     """convert kitti locations, dimensions and angles to corners.
     format: center(xy), dims(xy), angles(clockwise when positive)
-    
+
     Args:
         centers (float array, shape=[N, 2]): locations in kitti label file.
         dims (float array, shape=[N, 2]): dimensions in kitti label file.
         angles (float array, shape=[N]): rotation_y in kitti label file.
-    
+
     Returns:
         [type]: [description]
     """
@@ -153,7 +154,9 @@ def corners_nd(dims, origin=0.5):
         [1, 2 ** ndim, ndim])
     return corners
 
+
 from numba import cuda
+
 
 @numba.jit(nopython=True)
 def sparse_sum_for_anchors_mask(coors, shape):
@@ -163,31 +166,32 @@ def sparse_sum_for_anchors_mask(coors, shape):
 
     return ret
 
+
 @cuda.jit
 def init_map_gpu(dense_map_cuda, coors_cuda):
     x = cuda.grid(1)
     if x < coors_cuda.shape[0]:
         dense_map_cuda[coors_cuda[x, 0], coors_cuda[x, 1]] += 1
 
+
 @cuda.jit
 def cumx_gpu(dense_map_cuda):
-
     x = cuda.grid(1)
     if x < dense_map_cuda.shape[1]:
         for r in range(dense_map_cuda.shape[0] - 1):
             dense_map_cuda[r + 1][x] = dense_map_cuda[r][x] + dense_map_cuda[r + 1][x]
 
+
 @cuda.jit
 def cumy_gpu(dense_map_cuda):
-
     x = cuda.grid(1)
     if x < dense_map_cuda.shape[0]:
         for c in range(dense_map_cuda.shape[1] - 1):
             dense_map_cuda[x][c + 1] = dense_map_cuda[x][c] + dense_map_cuda[x][c + 1]
 
+
 @cuda.jit
 def cumx_gpu(dense_map_cuda):
-
     x = cuda.grid(1)
     if x < dense_map_cuda.shape[1]:
         for r in range(dense_map_cuda.shape[0] - 1):
@@ -195,8 +199,8 @@ def cumx_gpu(dense_map_cuda):
 
 
 def sparse_sum_for_anchors_mask_gpu(coors, shape):
-    #stream = cuda.stream()
-    #with stream.auto_synchronize():
+    # stream = cuda.stream()
+    # with stream.auto_synchronize():
     dense_map = np.zeros(shape, dtype=np.float32)
     dense_map_cuda = cuda.to_device(dense_map)
     coors_cuda = cuda.to_device(coors)
@@ -211,6 +215,7 @@ def sparse_sum_for_anchors_mask_gpu(coors, shape):
     # dense_voxel_map = dense_map_cuda.copy_to_host()
     return dense_map_cuda
 
+
 @cuda.jit
 def get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda):
     N = anchor_coor_cuda.shape[0]
@@ -222,6 +227,8 @@ def get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda):
         IB = dense_map_cuda[maxx, miny]
         IC = dense_map_cuda[minx, maxy]
         anchors_mask_cuda[x] = (ID - IB - IC + IA) > 0
+
+
 '''
 def fused_get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cuda):
     threadperblock = 1024
@@ -230,6 +237,7 @@ def fused_get_anchors_mask_gpu(anchor_coor_cuda, dense_map_cuda, anchors_mask_cu
     anchors_mask = anchors_mask_cuda.copy_to_host()
     return anchors_mask
 '''
+
 
 def fused_get_anchors_mask_gpu(coors, shape, anchor_coors_cuda, anchors_mask_cuda):
     coors_cuda = cuda.to_device(coors)
@@ -249,6 +257,7 @@ def fused_get_anchors_mask_gpu(coors, shape, anchor_coors_cuda, anchors_mask_cud
     get_anchors_mask_gpu[block, threadperblock](anchor_coors_cuda, dense_map_cuda, anchors_mask_cuda)
     anchors_mask = anchors_mask_cuda.copy_to_host()
     return anchors_mask
+
 
 @numba.jit(nopython=True)
 def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
@@ -278,9 +287,6 @@ def fused_get_anchors_area(dense_map, anchors_bv, stride, offset,
     return ret
 
 
-
-
-
 @numba.jit(nopython=True)
 def get_anchor_coor(anchors_bv, stride, offset, grid_size):
     anchor_coor = np.zeros(anchors_bv.shape[1:], dtype=np.int32)
@@ -299,6 +305,7 @@ def get_anchor_coor(anchors_bv, stride, offset, grid_size):
         ret[i, 2] = min(anchor_coor[2], grid_size_x)
         ret[i, 3] = min(anchor_coor[3], grid_size_y)
     return ret
+
 
 def rbbox2d_to_near_bbox(rbboxes):
     """convert rotated bbox to nearest 'standing' or 'lying' bbox.
@@ -362,8 +369,8 @@ def box_encode(boxes, anchors):
     # need to convert boxes to z-center format
     xa, ya, za, la, wa, ha, ra = np.split(anchors, 7, axis=-1)
     xg, yg, zg, lg, wg, hg, rg = np.split(boxes, 7, axis=-1)
-    #zg = zg + hg / 2
-    #za = za + ha / 2
+    # zg = zg + hg / 2
+    # za = za + ha / 2
     diagonal = np.sqrt(la ** 2 + wa ** 2)  # 4.3
     xt = (xg - xa) / diagonal
     yt = (yg - ya) / diagonal
@@ -377,6 +384,7 @@ def box_encode(boxes, anchors):
     return np.concatenate([xt, yt, zt, lt, wt, ht, rt], axis=-1)
 
 
+'''
 def box_decode(box_encodings, anchors):
     """box decode for VoxelNet in lidar
     Args:
@@ -387,15 +395,70 @@ def box_decode(box_encodings, anchors):
     xa, ya, za, wa, la, ha, ra = np.split(anchors, 7, axis=-1)
     xt, yt, zt, wt, lt, ht, rt = np.split(box_encodings, 7, axis=-1)
     # za = za + ha / 2
-    diagonal = np.sqrt(la**2 + wa**2)
+    diagonal = np.sqrt(la ** 2 + wa ** 2)
     xg = xt * diagonal + xa
     yg = yt * diagonal + ya
     zg = zt * ha + za
     rg = rt + ra
-    #zg = zg - hg / 2
+    # zg = zg - hg / 2
     return np.concatenate([xg, yg, zg, wg, lg, hg, rg], axis=-1)
-    
+'''
 
+
+def box_decode(box_encodings, anchors):
+    xa, ya, za, la, wa, ha, ra = np.split(anchors, 7, axis=-1)
+    xt, yt, zt, lt, wt, ht, rt = np.split(box_encodings, 7, axis=-1)
+
+    za = za + ha / 2
+
+    diagonal = np.sqrt(la ** 2 + wa ** 2)
+    xg = xt * diagonal + xa
+    yg = yt * diagonal + ya
+    zg = zt * ha + za
+
+    lg = np.exp(lt) * la
+    wg = np.exp(wt) * wa
+    hg = np.exp(ht) * ha
+
+    rg = rt + ra
+    zg = zg - hg / 2
+    return np.concatenate([xg, yg, zg, lg, wg, hg, rg], axis=-1)
+
+'''
+@cuda.jit
+def decode(box_encodings_cuda, anchors_cuda, bbox):
+    x = cuda.grid(1)
+    if x < box_encodings_cuda.shape[0]:
+        xa, ya, za, wa, la, ha, ra = anchors_cuda[x]
+        xt, yt, zt, wt, lt, ht, rt = box_encodings_cuda[x]
+        diagonal = np.sqrt(la ** 2 + wa ** 2)
+        xg = xt * diagonal + xa
+        yg = yt * diagonal + ya
+        zg = zt * ha + za
+        rg = rt + ra
+
+        np.concatenate([xg, yg, zg, wg, lg, hg, rg], axis=-1)
+
+
+def box_decode_gpu(box_encodings, anchors):
+    xa, ya, za, wa, la, ha, ra = np.split(anchors, 7, axis=-1)
+    xt, yt, zt, wt, lt, ht, rt = np.split(box_encodings, 7, axis=-1)
+
+    dense_map = np.zeros(shape, dtype=np.float32)
+    box_encodings_cuda = cuda.to_device(box_encodings)
+    anchors_cuda = cuda.to_device(anchors)
+
+    threadperblock = 256
+    block = int(coors.shape[0] // threadperblock) + 1
+    init_map_gpu[block, threadperblock](dense_map_cuda, coors_cuda)
+
+    block = int(np.amax(shape) // threadperblock) + 1
+    cumx_gpu[block, threadperblock](dense_map_cuda)
+    cumy_gpu[block, threadperblock](dense_map_cuda)
+    # dense_voxel_map = dense_map_cuda.copy_to_host()
+    return dense_map_cuda
+
+'''
 def points_in_rbbox(points, rbbox, lidar=True):
     h_axis = 2
     origin = [0.5, 0.5, 0.5]
@@ -412,9 +475,9 @@ def corner_to_surfaces_3d(corners):
     to surfaces that normal vectors all direct to internal.
 
     Args:
-        corners (float array, [N, 8, 3]): 3d box corners. 
+        corners (float array, [N, 8, 3]): 3d box corners.
     Returns:
-        surfaces (float array, [N, 6, 4, 3]): 
+        surfaces (float array, [N, 6, 4, 3]):
     """
     # box_corners: [N, 8, 3], must from corner functions in this module
     surfaces = np.array([
@@ -426,6 +489,7 @@ def corner_to_surfaces_3d(corners):
         [corners[:, 3], corners[:, 2], corners[:, 6], corners[:, 7]],
     ]).transpose([2, 0, 1, 3])
     return surfaces
+
 
 @numba.jit(nopython=True)
 def corner_to_surfaces_3d_jit(corners):
@@ -456,7 +520,7 @@ def center_to_corner_box3d(centers,
                            origin=[0.5, 1.0, 0.5],
                            axis=1):
     """convert kitti locations, dimensions and angles to corners
-    
+
     Args:
         centers (float array, shape=[N, 3]): locations in kitti label file.
         dims (float array, shape=[N, 3]): dimensions in kitti label file.
@@ -478,9 +542,8 @@ def center_to_corner_box3d(centers,
         corners = rotation_3d_in_axis(corners, angles, axis=axis)
     corners += centers.reshape([-1, 1, 3])
     return corners
- 
- 
- 
+
+
 def rotation_3d_in_axis(points, angles, axis=0):
     # points: [N, point_size, 3]
     rot_sin = np.sin(angles)
@@ -506,13 +569,13 @@ def rotation_3d_in_axis(points, angles, axis=0):
 @numba.njit
 def corners_3d_jit(dims, origin=0.5):
     ndim = 3
-    corners_norm = np.array([0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1], dtype=dims.dtype).reshape((8, 3))
+    corners_norm = np.array([0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1],
+                            dtype=dims.dtype).reshape((8, 3))
     corners_norm = corners_norm[[0, 1, 3, 2, 4, 5, 7, 6]]
     corners_norm = corners_norm - np.array(origin, dtype=dims.dtype)
     corners = dims.reshape((-1, 1, ndim)) * corners_norm.reshape(
-        (1, 2**ndim, ndim))
+        (1, 2 ** ndim, ndim))
     return corners
-
 
 
 @numba.jit(nopython=False)
@@ -522,11 +585,11 @@ def points_in_convex_polygon_3d_jit(points,
     """check points is in 3d convex polygons.
     Args:
         points: [num_points, 3] array.
-        polygon_surfaces: [num_polygon, max_num_surfaces, 
-            max_num_points_of_surface, 3] 
+        polygon_surfaces: [num_polygon, max_num_surfaces,
+            max_num_points_of_surface, 3]
             array. all surfaces' normal vector must direct to internal.
             max_num_points_of_surface must at least 3.
-        num_surfaces: [num_polygon] array. indicate how many surfaces 
+        num_surfaces: [num_polygon] array. indicate how many surfaces
             a polygon contain
     Returns:
         [num_points, num_polygon] bool array.
@@ -547,14 +610,14 @@ def points_in_convex_polygon_3d_jit(points,
                 if k > num_surfaces[j]:
                     break
                 sign = points[i, 0] * normal_vec[j, k, 0] \
-                     + points[i, 1] * normal_vec[j, k, 1] \
-                     + points[i, 2] * normal_vec[j, k, 2] + d[j, k]
+                       + points[i, 1] * normal_vec[j, k, 1] \
+                       + points[i, 2] * normal_vec[j, k, 2] + d[j, k]
                 if sign >= 0:
                     ret[i, j] = False
                     break
     return ret
-    
-    
+
+
 @numba.jit(nopython=False)
 def surface_equ_3d_jit(polygon_surfaces):
     # return [a, b, c], d in ax+by+cz+d=0
@@ -569,15 +632,15 @@ def rotation_points_single_angle(points, angle, axis=0):
     # points: [N, 3]
     rot_sin = np.sin(angle)
     rot_cos = np.cos(angle)
-    if axis == 1:#pitch
+    if axis == 1:  # pitch
         rot_mat_T = np.array(
             [[rot_cos, 0, rot_sin], [0, 1, 0], [-rot_sin, 0, rot_cos]],
             dtype=points.dtype)
-    elif axis == 2 or axis == -1:#yaw
+    elif axis == 2 or axis == -1:  # yaw
         rot_mat_T = np.array(
             [[rot_cos, rot_sin, 0], [-rot_sin, rot_cos, 0], [0, 0, 1]],
             dtype=points.dtype)
-    elif axis == 0:#roll
+    elif axis == 0:  # roll
         rot_mat_T = np.array(
             [[1, 0, 0], [0, rot_cos, -rot_sin], [0, rot_sin, rot_cos]],
             dtype=points.dtype)
@@ -639,6 +702,7 @@ def corner_to_surfaces_3d_jit(corners):
                 surfaces[i, j, k] = corners[i, corner_idxes[j, k]]
     return surfaces
 
+
 @numba.njit
 def corner_to_standup_nd_jit(boxes_corner):
     num_boxes = boxes_corner.shape[0]
@@ -650,6 +714,7 @@ def corner_to_standup_nd_jit(boxes_corner):
         for j in range(ndim):
             result[i, j + ndim] = np.max(boxes_corner[i, :, j])
     return result
+
 
 '''    
 def riou_cc(rbboxes, qrbboxes, standup_thresh=0.0):
@@ -831,7 +896,7 @@ def corner_to_standup_nd(boxes_corner):
 
 def rotation_box(box_corners, angle):
     """rotation 2d points based on origin point clockwise when angle positive.
-    
+
     Args:
         points (float array, shape=[N, point_size, 2]): points to be rotated.
         angle (float): rotation angle.
