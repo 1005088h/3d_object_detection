@@ -7,7 +7,8 @@ from numba import cuda
 
 class AnchorAssigner:
     def __init__(self, config):
-        config['detect_class'] = ["vehicle", "pedestrian", "cyclist"] # vehicle, pedestrian, cyclist
+        config['detect_class'] = ["vehicle"] # vehicle, pedestrian, cyclist
+        # config['detect_class'] = ["vehicle", "pedestrian", "cyclist"]  # vehicle, pedestrian, cyclist
         self.detect_class = config['detect_class']
         config["vehicle"] = {}
         config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]

@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars7 import PointPillars
+from networks.pointpillars8 import PointPillars
 # from networks.pointpillars4 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -222,7 +222,11 @@ def infer():
             preds_dict = net(example)
             torch.cuda.synchronize()
         net_time = time.time()
-        dt_annos += inference.infer(example, preds_dict)
+        # anno1 = inference.infer(example, preds_dict)
+        anno2 = inference.infer2(example, preds_dict)
+        # comparison = anno1[0]["score"] == anno2[0]["score"]
+        # print(comparison.all())
+
         post_time = time.time()
 
         pre_time_avg += pre_time - start_time
@@ -309,7 +313,9 @@ class PointPillarsNode:
             with torch.no_grad():
                 preds_dict = self.net(example)
             net_time = time.time()
-            dt_annos += self.inference.infer(example, preds_dict)
+
+            anno = self.inference.infer(example, preds_dict)
+
             post_time = time.time()
 
             pre_time_avg += pre_time - start_time

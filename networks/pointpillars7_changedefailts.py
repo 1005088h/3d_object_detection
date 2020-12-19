@@ -16,15 +16,11 @@ class PointNet(nn.Module):
         self.x_offset = self.vx / 2 + offset[0]
         self.y_offset = self.vy / 2 + offset[1]
 
-        BatchNorm1d = change_default_args(
-            eps=1e-3, momentum=0.01)(nn.BatchNorm1d)
-        Conv1d = change_default_args(bias=False)(nn.Conv1d)
-
         # Create PillarFeatureNet layers
         in_channels = num_input_features
         self.out_channels = 64
-        model = [Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
-                 BatchNorm1d(self.out_channels),
+        model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
+                 nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
 
         self.pfn_layers = nn.Sequential(*model)
@@ -117,12 +113,7 @@ class PointPillarsScatter(nn.Module):
 class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
-
-        norm_layer = change_default_args(
-            eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
-        Conv2d = change_default_args(bias=False)(nn.Conv2d)
-
-        # norm_layer = functools.partial(InstanceNorm2d, affine=False, track_running_stats=False)
+        # norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
         layer_nums = [2, 4, 4]
         layer_strides = [2, 2, 2]
         num_filters = [64, 128, 256]
@@ -132,6 +123,10 @@ class RPN(nn.Module):
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
         self.out_plane = sum(num_upsample_filters)
+
+        norm_layer = change_default_args(
+            eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
+        Conv2d = change_default_args(bias=False)(nn.Conv2d)
 
         model = [Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
@@ -146,7 +141,7 @@ class RPN(nn.Module):
                  nn.ReLU()]
         self.deconv1 = Sequential(*model)
 
-        model = [nn.Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
+        model = [Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
         model += [Resnet2(num_filters[1], norm_layer, 1)]
@@ -160,7 +155,7 @@ class RPN(nn.Module):
                  nn.ReLU()]
         self.deconv2 = Sequential(*model)
 
-        model = [nn.Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
+        model = [Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
         model += [Resnet2(num_filters[2], norm_layer, 1)]
@@ -191,24 +186,28 @@ class SingleHead(nn.Module):
         super().__init__()
         self.box_code_size = 7
 
-        num_car_size = 3
-        num_car_rot = 2
-        num_car_anchor_per_loc = num_car_size * num_car_rot
-        self.conv_car_cls = nn.Conv2d(in_plane, num_car_anchor_per_loc, 1)
-        self.conv_car_box = nn.Conv2d(in_plane, num_car_anchor_per_loc * self.box_code_size, 1)
-        self.conv_car_dir = nn.Conv2d(in_plane, num_car_anchor_per_loc * 2, 1)
+        num_ped_size = 1
+        num_ped_rot = 1
+        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
+        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
+        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
+        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
 
     def forward(self, x):
         batch_size = x.shape[0]
 
-        cls_preds = self.conv_car_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        box_preds = self.conv_car_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        dir_preds = self.conv_car_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
+        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
+        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+
+        cls_preds = ped_cls_preds
+        box_preds = ped_box_preds
+        dir_cls_preds = ped_dir_preds
 
         pred_dict = {
             "cls_preds": cls_preds,
             "box_preds": box_preds,
-            "dir_preds": dir_preds
+            "dir_cls_preds": dir_cls_preds
         }
 
         return pred_dict
@@ -290,7 +289,7 @@ class SingleHeads(nn.Module):
         return pred_dict
 
 
-class MultiHeads(nn.Module):
+class MultiHead(nn.Module):
 
     def __init__(self, in_plane):
         super().__init__()
@@ -344,34 +343,6 @@ class MultiHeads(nn.Module):
         return pred_dict
 
 
-class MultiHead(nn.Module):
-
-    def __init__(self, in_plane):
-        super().__init__()
-        self.box_code_size = 7
-
-        num_veh_size = 3
-        num_veh_rot = 2
-        num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-        self.conv_veh_cls = nn.Conv2d(in_plane, num_veh_anchor_per_loc, 1)
-        self.conv_veh_box = nn.Conv2d(in_plane, num_veh_anchor_per_loc * self.box_code_size, 1)
-        self.conv_veh_dir = nn.Conv2d(in_plane, num_veh_anchor_per_loc * 2, 1)
-
-    def forward(self, x):
-        batch_size = x.shape[0]
-        cls_preds = self.conv_veh_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_preds": dir_preds
-        }
-
-        return pred_dict
-
-
 class PointPillars(nn.Module):
 
     def __init__(self, config):
@@ -385,7 +356,7 @@ class PointPillars(nn.Module):
 
         self.rpn = RPN(num_rpn_input_filters)
         self.heads = MultiHead(self.rpn.out_plane)
-        # self.heads = SingleHead(self.rpn.out_plane)
+        # self.heads = SingleHeads(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
         self.rpn_feature_time = 0.0
@@ -452,11 +423,11 @@ class Resnet2(nn.Module):
 
     def __init__(self, dim, norm_layer, num_layer=1):
         ### Full pre-activation
-
         super(Resnet2, self).__init__()
-        conv_block = [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]
+        Conv2d = change_default_args(bias=False)(nn.Conv2d)
+        conv_block = [norm_layer(dim), nn.ReLU(True), Conv2d(dim, dim, kernel_size=3, padding=1)]
         for layer in range(num_layer):
-            conv_block += [norm_layer(dim), nn.ReLU(True), nn.Conv2d(dim, dim, kernel_size=3, padding=1)]
+            conv_block += [norm_layer(dim), nn.ReLU(True), Conv2d(dim, dim, kernel_size=3, padding=1)]
         self.conv_block = nn.Sequential(*conv_block)
 
     def forward(self, x):
