@@ -5,6 +5,7 @@
   "eval_info": ["soonlee/eval/data_info.pkl", "ntu/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
   "experiment": "ntusl_pillar9",
+  "create_mask_gpu": 1,
   "result_path": "results/",
   "batch_size": 1,
   "num_workers": 0,

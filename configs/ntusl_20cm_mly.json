@@ -1,10 +1,11 @@
 {
-  "data_root": "/home/xy/ST/dataset/inhouse",
+  "data_root": "/media/mly/mly_1/xuyan/dataset/stels",
   "model_path": "models/",
   "train_info": ["soonlee/train/data_info.pkl", "ntu/train/data_info.pkl"],
   "eval_info": ["soonlee/eval/data_info.pkl", "ntu/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
-  "experiment": "ntusl_pillar7",
+  "experiment": "ntusl_pillar9",
+  "create_mask_gpu": ,
   "result_path": "results/",
   "batch_size": 1,
   "num_workers": 3,

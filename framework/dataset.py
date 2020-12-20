@@ -32,7 +32,7 @@ class GenericDataset(Dataset):
         self.augm = augm
         self.voxelization_t = 0.0
         self.load_t = 0.0
-
+        self.create_mask_gpu = config['create_mask_gpu'] == 1
         car_total = 0
         truck_total = 0
         bus_total = 0
@@ -87,7 +87,6 @@ class GenericDataset(Dataset):
 
         v_path = self.data_root / info['velodyne_path']
         points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, self.num_point_features])
-
 
         # read calib
         rect = info['calib/R0_rect'].astype(np.float32)
@@ -146,7 +145,7 @@ class GenericDataset(Dataset):
         grid_size = self.grid_size
         voxel_size = self.voxel_generator.voxel_size
         offset = self.voxel_generator.offset
-        anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset)
+        anchors_mask = self.anchor_assigner.create_mask(coors, grid_size, voxel_size, offset, gpu=self.create_mask_gpu)
 
         example['voxels'] = voxels
         example['coordinates'] = coors
@@ -196,6 +195,7 @@ class InferData:
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
         self.grid_size = config['grid_size']
+        self.create_mask_gpu = config['gpu'] == 1
         self.dtype = dtype
 
         self.voxel_time = 0.0
@@ -208,7 +208,7 @@ class InferData:
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
         voxel_time = time.time()
         anchors_mask = self.anchor_assigner.create_mask(coors, self.grid_size, self.voxel_generator.voxel_size,
-                                                        self.voxel_generator.offset)
+                                                        self.voxel_generator.offset, gpu=self.create_mask_gpu)
         anchors_mask = anchors_mask[np.newaxis, :]
         mask_time = time.time()
         example = {'voxels': voxels, 'coordinates': coors, 'num_points_per_voxel': num_points_per_voxel,
