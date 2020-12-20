@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8 import PointPillars
+from networks.pointpillars9 import PointPillars
 # from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt

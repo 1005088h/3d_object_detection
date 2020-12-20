@@ -6,7 +6,7 @@ import time
 from framework.utils import change_default_args
 
 
-### change anchor order
+### different heads
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -323,7 +323,8 @@ class SingleHeads(nn.Module):
 
         dir_preds = self.conv_dir(x)
         N, C, H, W = dir_preds.shape
-        dir_preds = dir_preds.view(N, self.num_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2).contiguous().view(N, -1, 2)
+        dir_preds = dir_preds.view(N, self.num_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2).contiguous().view(N, -1,
+                                                                                                                 2)
 
         pred_dict = {
             "cls_preds": cls_preds,
@@ -492,6 +493,61 @@ class MultiHeads(nn.Module):
         return pred_dict
 
 
+class DiffHeads(nn.Module):
+
+    def __init__(self, in_plane):
+        super().__init__()
+        self.box_code_size = 7
+
+        self.feature1_anchor_per_loc = 2 * 2
+        self.conv_feature1_cls = nn.Conv2d(in_plane, self.feature1_anchor_per_loc, 3, stride=2, padding=1)
+        self.conv_feature1_box = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 7, 3, stride=2, padding=1)
+        self.conv_feature1_dir = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 2, 3, stride=2, padding=1)
+
+        self.feature2_anchor_per_loc = 1 * 2 + 1 * 1 + 1 * 2
+        self.conv_feature2_cls = nn.Conv2d(in_plane, self.feature2_anchor_per_loc, 1)
+        self.conv_feature2_box = nn.Conv2d(in_plane, self.feature2_anchor_per_loc * 7, 1)
+        self.conv_feature2_dir = nn.Conv2d(in_plane, self.feature2_anchor_per_loc * 2, 1)
+
+    def forward(self, x):
+        N = x.shape[0]
+        cls_preds1 = self.conv_feature1_cls(x).view(N, -1, 1)
+
+        box_preds1 = self.conv_feature1_box(x)
+        N, C, H, W = box_preds1.shape
+        box_preds1 = box_preds1.view(N, self.feature1_anchor_per_loc, self.box_code_size, H, W).permute(0, 1, 3, 4, 2)
+        box_preds1 = box_preds1.contiguous().view(N, -1, self.box_code_size)
+
+        dir_preds1 = self.conv_feature1_dir(x)
+        N, C, H, W = dir_preds1.shape
+        dir_preds1 = dir_preds1.view(N, self.feature1_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2)
+        dir_preds1 = dir_preds1.contiguous().view(N, -1, 2)
+
+        cls_preds2 = self.conv_feature2_cls(x).view(N, -1, 1)
+
+        box_preds2 = self.conv_feature2_box(x)
+        N, C, H, W = box_preds2.shape
+        box_preds2 = box_preds2.view(N, self.feature2_anchor_per_loc, self.box_code_size, H, W).permute(0, 1, 3, 4, 2)
+        box_preds2 = box_preds2.contiguous().view(N, -1, self.box_code_size)
+
+        dir_preds2 = self.conv_feature2_dir(x)
+        N, C, H, W = dir_preds2.shape
+        dir_preds2 = dir_preds2.view(N, self.feature2_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2)
+        dir_preds2 = dir_preds2.contiguous().view(N, -1, 2)
+
+        cls_preds = torch.cat((cls_preds1, cls_preds2), dim=1)
+        box_preds = torch.cat((box_preds1, box_preds2), dim=1)
+        dir_preds = torch.cat((dir_preds1, dir_preds2), dim=1)
+
+        pred_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        return pred_dict
+
+
 class PointPillars(nn.Module):
 
     def __init__(self, config):
@@ -504,8 +560,8 @@ class PointPillars(nn.Module):
                                                             num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        # self.heads = MultiHeads(self.rpn.out_plane)
-        self.heads = SingleHeads(self.rpn.out_plane)
+        # self.heads = SingleHeads(self.rpn.out_plane)
+        self.heads = DiffHeads(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
         self.rpn_feature_time = 0.0

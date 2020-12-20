@@ -72,10 +72,10 @@ class Inference:
 
                 torch.cuda.synchronize()
                 p2 = time.time()
-                top_scores = top_scores.cpu().numpy()
-                box_preds = box_preds[indices].cpu().numpy()
-                dir_labels = dir_labels[indices].cpu().numpy()
-                anchors = anchors[indices].cpu().numpy()
+                top_scores = top_scores.detach().cpu().numpy()
+                box_preds = box_preds[indices].detach().cpu().numpy()
+                dir_labels = dir_labels[indices].detach().cpu().numpy()
+                anchors = anchors[indices].detach().cpu().numpy()
                 box_preds = box_np_ops.box_decode(box_preds, anchors)
                 boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
                 box_preds_corners = box_np_ops.center_to_corner_box2d(

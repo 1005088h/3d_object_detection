@@ -232,7 +232,7 @@ class AnchorAssigner:
         config["vehicle"] = {}
         config["vehicle"]["sizes"] = [[12.6, 2.9, 3.8], [7.5, 2.6, 2.9], [4.6, 2.10, 1.8]]
         config["vehicle"]["rotations"] = [0, 1.5707963267948966]
-        config["vehicle"]["feature_map_size"] = [[400, 400, 1], [400, 400, 1], [400, 400, 1]]
+        config["vehicle"]["feature_map_size"] = [[200, 200, 1], [200, 200, 1], [400, 400, 1]]
         config["vehicle"]["matched_threshold"] = 0.6
         config["vehicle"]["unmatched_threshold"] = 0.45
 
