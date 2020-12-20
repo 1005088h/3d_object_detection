@@ -65,21 +65,18 @@ class Inference:
                 num_keeped_scores = top_scores.shape[0]
                 pre_max_size = min(num_keeped_scores, self._nms_pre_max_size)
 
+                torch.cuda.synchronize()
+                p1 = time.time()
+
                 top_scores, indices = torch.topk(top_scores, k=pre_max_size)
 
+                torch.cuda.synchronize()
+                p2 = time.time()
                 top_scores = top_scores.cpu().numpy()
                 box_preds = box_preds[indices].cpu().numpy()
                 dir_labels = dir_labels[indices].cpu().numpy()
                 anchors = anchors[indices].cpu().numpy()
-
-                torch.cuda.synchronize()
-                p1 = time.time()
-
                 box_preds = box_np_ops.box_decode(box_preds, anchors)
-
-                torch.cuda.synchronize()
-                p2 = time.time()
-
                 boxes_for_nms = box_preds[:, [0, 1, 3, 4, 6]]
                 box_preds_corners = box_np_ops.center_to_corner_box2d(
                     boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
@@ -503,7 +500,7 @@ class Inference:
                         boxes_for_nms[:, :2], boxes_for_nms[:, 2:4], boxes_for_nms[:, 4])
                     boxes_for_nms = box_torch_ops.corner_to_standup_nd(box_preds_corners)
 
-                    selected = nms(
+                    selected = nms_v1(
                         boxes_for_nms,
                         top_scores,
                         pre_max_size=self._nms_pre_max_size,

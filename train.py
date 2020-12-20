@@ -11,8 +11,8 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-# from networks.pointpillars8 import PointPillars
-from networks.pointpillars5 import PointPillars
+from networks.pointpillars8 import PointPillars
+# from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -144,7 +144,7 @@ def train():
                 print('\r%d / %d' % (count, eval_total), end='')
                 example = example_convert_to_torch(example, device=device)
                 preds_dict = net(example)
-                dt_annos += inference.infer(example, preds_dict)
+                dt_annos += inference.infer_gpu(example, preds_dict)
             t = (time.time() - t) / len(eval_dataloader)
             print('\nTime for each frame: %f\n' % t)
 
@@ -192,7 +192,7 @@ def infer():
     net.to(device)
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '180000.pth'
+    latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -246,12 +246,11 @@ def infer():
     print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
 
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
-    '''
+
     print("p1 time : \t\t\t\t%.5f" % (inference.p1 / len_infos))
     print("p2 time : \t\t\t\t%.5f" % (inference.p2 / len_infos))
     print("p3 time : \t\t\t\t%.5f" % (inference.p3 / len_infos))
     print("p4 time : \t\t\t\t%.5f" % (inference.p4 / len_infos))
-    '''
 
 
     dt_path = Path(config['data_root']) / config['experiment']
@@ -264,7 +263,7 @@ def infer():
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-    
+
 
 
 class PointPillarsNode:
@@ -335,8 +334,8 @@ class PointPillarsNode:
 
 
 if __name__ == "__main__":
-    # train()
-    infer()
+    train()
+    # infer()
     # PointPillarsNode().spin()
 
 '''

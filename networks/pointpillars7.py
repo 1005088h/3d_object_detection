@@ -5,6 +5,7 @@ import functools
 import time
 from framework.utils import change_default_args
 
+### change default
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -127,6 +128,7 @@ class RPN(nn.Module):
         norm_layer = change_default_args(
             eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
         Conv2d = change_default_args(bias=False)(nn.Conv2d)
+        ConvTranspose2d = change_default_args(bias=False)(nn.ConvTranspose2d)
 
         model = [Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
                  norm_layer(num_filters[0]),
@@ -135,7 +137,7 @@ class RPN(nn.Module):
         model += [Resnet2(num_filters[0], norm_layer, 0)]
         self.block1 = Sequential(*model)
 
-        model = [nn.ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0],
+        model = [ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0],
                                     stride=upsample_strides[0]),
                  norm_layer(num_upsample_filters[0]),
                  nn.ReLU()]
@@ -149,7 +151,7 @@ class RPN(nn.Module):
         model += [Resnet2(num_filters[1], norm_layer, 0)]
         self.block2 = Sequential(*model)
 
-        model = [nn.ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
+        model = [ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
                                     stride=upsample_strides[1]),
                  norm_layer(num_upsample_filters[1]),
                  nn.ReLU()]
@@ -163,7 +165,7 @@ class RPN(nn.Module):
         model += [Resnet2(num_filters[2], norm_layer, 0)]
         self.block3 = Sequential(*model)
 
-        model = [nn.ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
+        model = [ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
                                     stride=upsample_strides[2]),
                  norm_layer(num_upsample_filters[2]),
                  nn.ReLU()]
@@ -355,8 +357,8 @@ class PointPillars(nn.Module):
                                                             num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        # self.heads = MultiHead(self.rpn.out_plane)
-        self.heads = SingleHeads(self.rpn.out_plane)
+        self.heads = MultiHead(self.rpn.out_plane)
+        #self.heads = SingleHeads(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
         self.rpn_feature_time = 0.0
