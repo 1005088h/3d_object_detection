@@ -53,7 +53,7 @@ class LossGenerator:
         cls_loss_reduced = cls_loss.sum() / batch_size * self._cls_loss_weight
         loss = loc_loss_reduced + cls_loss_reduced
 
-        dir_cls_targets = torch.from_numpy(example['dir_targets']).cuda()
+        dir_cls_targets = torch.from_numpy(example['dir_targets']).to(self.device)
         dir_cls_targets = one_hot(dir_cls_targets, 2)
         dir_logits = preds_dict["dir_preds"].view(batch_size, -1, 2)
         weights = (labels > 0).type_as(dir_logits)
@@ -183,7 +183,7 @@ class WeightedSmoothL1LocalizationLoss:
         super().__init__()
         self._sigma = sigma
         code_weights = np.ones(7, dtype=np.float32)
-        self._code_weights = torch.from_numpy(code_weights).cuda()
+        self._code_weights = torch.from_numpy(code_weights)
 
     def compute_loss(self, prediction_tensor, target_tensor, weights):
         diff = prediction_tensor - target_tensor

@@ -95,7 +95,7 @@ def train():
             example = next(data_iter)
 
         optimizer.zero_grad()
-        example = example_convert_to_torch(example)
+        example = example_convert_to_torch(example, device=device)
         # with torch.cuda.amp.autocast():
         preds_dict = net(example)
         loss_dict = loss_generator.generate(preds_dict, example)
