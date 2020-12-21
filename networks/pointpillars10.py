@@ -244,7 +244,7 @@ class FPN(nn.Module):
         model = [Conv2d(num_filters[2], num_filters[2], 1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
-        self.block21 = Sequential(*model)
+        self.block31 = Sequential(*model)
 
         model = [ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
                                  stride=upsample_strides[2]),
