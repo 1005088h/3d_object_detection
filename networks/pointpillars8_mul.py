@@ -6,7 +6,7 @@ import time
 from framework.utils import change_default_args
 
 
-### FPN
+### change anchor order
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -20,7 +20,7 @@ class PointNet(nn.Module):
 
         # Create PillarFeatureNet layers
         in_channels = num_input_features
-        self.out_channels = 64
+        self.out_channels = 80
         model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
@@ -183,90 +183,6 @@ class RPN(nn.Module):
         return x
 
 
-class FPN(nn.Module):
-    def __init__(self, num_rpn_input_filters):
-        super().__init__()
-        # norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
-        layer_nums = [2, 4, 4]
-        layer_strides = [2, 2, 2]
-        num_filters = [64, 128, 256]
-        upsample_strides = [1, 2, 4]
-        num_upsample_filters = [64, 128, 128]
-        num_input_filters = num_rpn_input_filters
-        use_direction_classifier = True
-        self._use_direction_classifier = use_direction_classifier
-        self.out_plane = 256
-
-        norm_layer = change_default_args(eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
-        Conv2d = change_default_args(bias=False)(nn.Conv2d)
-        ConvTranspose2d = change_default_args(bias=False)(nn.ConvTranspose2d)
-
-        model = [Conv2d(num_input_filters, num_filters[0], 3, stride=2, padding=1),
-                 norm_layer(num_filters[0]),
-                 nn.ReLU()]
-        model += [Resnet2(num_filters[0], norm_layer, 1)]
-        model += [Resnet2(num_filters[0], norm_layer, 0)]
-        self.block1 = Sequential(*model)
-
-        model = [Conv2d(num_filters[0], self.out_plane, 1),
-                 norm_layer(self.out_plane),
-                 nn.ReLU()]
-        self.block11 = Sequential(*model)
-
-        model = [Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
-                 norm_layer(num_filters[1]),
-                 nn.ReLU()]
-        model += [Resnet2(num_filters[1], norm_layer, 1)]
-        model += [Resnet2(num_filters[1], norm_layer, 1)]
-        model += [Resnet2(num_filters[1], norm_layer, 0)]
-        self.block2 = Sequential(*model)
-
-        model = [Conv2d(num_filters[1], self.out_plane, 1),
-                 norm_layer(self.out_plane),
-                 nn.ReLU()]
-        self.block21 = Sequential(*model)
-
-        model = [ConvTranspose2d(self.out_plane, self.out_plane, 2, stride=2),
-                 norm_layer(self.out_plane, ),
-                 nn.ReLU()]
-        self.deconv2 = Sequential(*model)
-        # self.conv2 = Conv2d(self.out_plane, self.out_plane, 3, stride=1, padding=1)
-
-        model = [Conv2d(num_filters[1], num_filters[2], 3, stride=layer_strides[2], padding=1),
-                 norm_layer(num_filters[2]),
-                 nn.ReLU()]
-        model += [Resnet2(num_filters[2], norm_layer, 1)]
-        model += [Resnet2(num_filters[2], norm_layer, 1)]
-        model += [Resnet2(num_filters[2], norm_layer, 0)]
-        self.block3 = Sequential(*model)
-
-        model = [Conv2d(num_filters[2], self.out_plane, 1),
-                 norm_layer(self.out_plane),
-                 nn.ReLU()]
-        self.block31 = Sequential(*model)
-
-        model = [ConvTranspose2d(self.out_plane, self.out_plane, 2, stride=2),
-                 norm_layer(self.out_plane),
-                 nn.ReLU()]
-        self.deconv3 = Sequential(*model)
-        # self.conv3 = Conv2d(self.out_plane, self.out_plane, 3, stride=1, padding=1)
-
-    def forward(self, x):
-        x = self.block1(x)
-        l1 = self.block11(x)
-        x = self.block2(x)
-        l2 = self.block21(x)
-        x = self.block3(x)
-        r3 = self.block31(x)
-
-        r2 = self.deconv3(r3) + l2
-        # r2 = self.conv3(r2)
-        r1 = self.deconv2(r2) + l1
-        # r1 = self.conv3(r1)
-        # out = [r3, r2, r1]
-        return r1
-
-
 class SingleHead(nn.Module):
 
     def __init__(self, in_plane):
@@ -300,130 +216,6 @@ class SingleHead(nn.Module):
         return pred_dict
 
 
-class SingleHeads(nn.Module):
-
-    def __init__(self, in_plane):
-        super().__init__()
-        self.box_code_size = 7
-
-        num_veh_size = 3
-        num_veh_rot = 2
-        self.num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-
-        num_ped_size = 1
-        num_ped_rot = 1
-        self.num_ped_anchor_per_loc = num_ped_size * num_ped_rot
-
-        num_cyc_size = 1
-        num_cyc_rot = 2
-        self.num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
-
-        self.num_anchor_per_loc = self.num_veh_anchor_per_loc + self.num_ped_anchor_per_loc + self.num_cyc_anchor_per_loc
-
-        self.conv_cls = nn.Conv2d(in_plane, self.num_anchor_per_loc, 1)
-        self.conv_box = nn.Conv2d(in_plane, self.num_anchor_per_loc * self.box_code_size, 1)
-        self.conv_dir = nn.Conv2d(in_plane, self.num_anchor_per_loc * 2, 1)
-
-    def forward(self, x):
-        N = x.shape[0]
-
-        cls_preds = self.conv_cls(x).view(N, -1, 1)
-
-        box_preds = self.conv_box(x)
-        N, C, H, W = box_preds.shape
-        box_preds = box_preds.view(N, self.num_anchor_per_loc, self.box_code_size, H, W).permute(0, 1, 3, 4, 2)
-        box_preds = box_preds.contiguous().view(N, -1, self.box_code_size)
-
-        dir_preds = self.conv_dir(x)
-        N, C, H, W = dir_preds.shape
-        dir_preds = dir_preds.view(N, self.num_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2).contiguous().view(N, -1,
-                                                                                                                 2)
-
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_preds": dir_preds
-        }
-
-        return pred_dict
-
-
-# class SingleHeads(nn.Module):
-#
-#     def __init__(self, in_plane):
-#         super().__init__()
-#         self.box_code_size = 7
-#
-#         num_veh_size = 3
-#         num_veh_rot = 2
-#         self.num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-#
-#         num_ped_size = 1
-#         num_ped_rot = 1
-#         self.num_ped_anchor_per_loc = num_ped_size * num_ped_rot
-#
-#         num_cyc_size = 1
-#         num_cyc_rot = 2
-#         self.num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
-#
-#         num_anchor_per_loc = self.num_veh_anchor_per_loc + self.num_ped_anchor_per_loc + self.num_cyc_anchor_per_loc
-#
-#         self.conv_cls = nn.Conv2d(in_plane, num_anchor_per_loc, 1)
-#         self.conv_box = nn.Conv2d(in_plane, num_anchor_per_loc * self.box_code_size, 1)
-#         self.conv_dir = nn.Conv2d(in_plane, num_anchor_per_loc * 2, 1)
-#
-#     def forward(self, x):
-#         batch_size = x.shape[0]
-#
-#         cls_preds = self.conv_cls(x)
-#         start = 0
-#         end = self.num_veh_anchor_per_loc
-#         veh_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-#         start = end
-#         end = start + self.num_ped_anchor_per_loc
-#         ped_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-#         start = end
-#         end = start + self.num_cyc_anchor_per_loc
-#         cyc_cls_preds = cls_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-#
-#         box_preds = self.conv_box(x)
-#         start = 0
-#         end = self.num_veh_anchor_per_loc * self.box_code_size
-#         veh_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1,
-#                                                                                            self.box_code_size)
-#         start = end
-#         end = start + self.num_ped_anchor_per_loc * self.box_code_size
-#         ped_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1,
-#                                                                                            self.box_code_size)
-#         start = end
-#         end = start + self.num_cyc_anchor_per_loc * self.box_code_size
-#         cyc_box_preds = box_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1,
-#                                                                                            self.box_code_size)
-#
-#         dir_preds = self.conv_dir(x)
-#         start = 0
-#         end = self.num_veh_anchor_per_loc * 2
-#         veh_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-#         start = end
-#         end = start + self.num_ped_anchor_per_loc * 2
-#         ped_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-#         start = end
-#         end = start + self.num_cyc_anchor_per_loc * 2
-#         cyc_dir_preds = dir_preds[:, start:end, ...].permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-#
-#         cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
-#         box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
-#         dir_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
-#
-#         pred_dict = {
-#             "cls_preds": cls_preds,
-#             "box_preds": box_preds,
-#             "dir_preds": dir_preds
-#         }
-#
-#         return pred_dict
-
-
 class MultiHead(nn.Module):
 
     def __init__(self, in_plane):
@@ -451,7 +243,7 @@ class MultiHead(nn.Module):
 
         return pred_dict
 
-
+'''
 class MultiHeads(nn.Module):
 
     def __init__(self, in_plane):
@@ -504,69 +296,9 @@ class MultiHeads(nn.Module):
         }
 
         return pred_dict
+'''
 
-
-class DiffHeads(nn.Module):
-
-    def __init__(self, in_plane):
-        super().__init__()
-        self.box_code_size = 7
-
-        self.feature1_anchor_per_loc = 2 * 2
-        self.conv_feature1_cls = nn.Conv2d(in_plane, self.feature1_anchor_per_loc, 3, stride=2, padding=1)
-        self.conv_feature1_box = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 7, 3, stride=2, padding=1)
-        self.conv_feature1_dir = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 2, 3, stride=2, padding=1)
-
-        # self.feature1_anchor_per_loc = 2 * 2
-        # self.conv_feature1_cls = nn.Conv2d(in_plane, self.feature1_anchor_per_loc, 1)
-        # self.conv_feature1_box = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 7, 1)
-        # self.conv_feature1_dir = nn.Conv2d(in_plane, self.feature1_anchor_per_loc * 2, 1)
-
-        self.feature2_anchor_per_loc = 1 * 2 + 1 * 1 + 1 * 2
-        self.conv_feature2_cls = nn.Conv2d(in_plane, self.feature2_anchor_per_loc, 1)
-        self.conv_feature2_box = nn.Conv2d(in_plane, self.feature2_anchor_per_loc * 7, 1)
-        self.conv_feature2_dir = nn.Conv2d(in_plane, self.feature2_anchor_per_loc * 2, 1)
-
-    def forward(self, x):
-        N = x.shape[0]
-        cls_preds1 = self.conv_feature1_cls(x).view(N, -1, 1)
-
-        box_preds1 = self.conv_feature1_box(x)
-        N, C, H, W = box_preds1.shape
-        box_preds1 = box_preds1.view(N, self.feature1_anchor_per_loc, self.box_code_size, H, W).permute(0, 1, 3, 4, 2)
-        box_preds1 = box_preds1.contiguous().view(N, -1, self.box_code_size)
-
-        dir_preds1 = self.conv_feature1_dir(x)
-        N, C, H, W = dir_preds1.shape
-        dir_preds1 = dir_preds1.view(N, self.feature1_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2)
-        dir_preds1 = dir_preds1.contiguous().view(N, -1, 2)
-
-        cls_preds2 = self.conv_feature2_cls(x).view(N, -1, 1)
-
-        box_preds2 = self.conv_feature2_box(x)
-        N, C, H, W = box_preds2.shape
-        box_preds2 = box_preds2.view(N, self.feature2_anchor_per_loc, self.box_code_size, H, W).permute(0, 1, 3, 4, 2)
-        box_preds2 = box_preds2.contiguous().view(N, -1, self.box_code_size)
-
-        dir_preds2 = self.conv_feature2_dir(x)
-        N, C, H, W = dir_preds2.shape
-        dir_preds2 = dir_preds2.view(N, self.feature2_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2)
-        dir_preds2 = dir_preds2.contiguous().view(N, -1, 2)
-
-        cls_preds = torch.cat((cls_preds1, cls_preds2), dim=1)
-        box_preds = torch.cat((box_preds1, box_preds2), dim=1)
-        dir_preds = torch.cat((dir_preds1, dir_preds2), dim=1)
-
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_preds": dir_preds
-        }
-
-        return pred_dict
-
-
-class FPNHeads(nn.Module):
+class SharedHead(nn.Module):
 
     def __init__(self, in_plane):
         super().__init__()
@@ -604,7 +336,6 @@ class FPNHeads(nn.Module):
         N, C, H, W = dir_preds.shape
         dir_preds = dir_preds.view(N, self.num_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2).contiguous().view(N, -1,
                                                                                                                  2)
-
         pred_dict = {
             "cls_preds": cls_preds,
             "box_preds": box_preds,
@@ -614,7 +345,7 @@ class FPNHeads(nn.Module):
         return pred_dict
 
 
-class MultiHeads_v1(nn.Module):
+class MultiHeads(nn.Module):
 
     def __init__(self, in_plane):
         super().__init__()
@@ -622,38 +353,59 @@ class MultiHeads_v1(nn.Module):
 
         num_veh_size = 3
         num_veh_rot = 2
-        num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-        self.conv_veh_cls = nn.Conv2d(in_plane, num_veh_anchor_per_loc, 1)
-        self.conv_veh_box = nn.Conv2d(in_plane, num_veh_anchor_per_loc * self.box_code_size, 1)
-        self.conv_veh_dir = nn.Conv2d(in_plane, num_veh_anchor_per_loc * 2, 1)
+        self.num_veh_anchor_per_loc = num_veh_size * num_veh_rot
+        self.conv_veh_cls = nn.Conv2d(in_plane, self.num_veh_anchor_per_loc, 1)
+        self.conv_veh_box = nn.Conv2d(in_plane, self.num_veh_anchor_per_loc * self.box_code_size, 1)
+        self.conv_veh_dir = nn.Conv2d(in_plane, self.num_veh_anchor_per_loc * 2, 1)
 
         num_ped_size = 1
         num_ped_rot = 1
-        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
-        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
-        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
-        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
+        self.num_ped_anchor_per_loc = num_ped_size * num_ped_rot
+        self.conv_ped_cls = nn.Conv2d(in_plane, self.num_ped_anchor_per_loc, 1)
+        self.conv_ped_box = nn.Conv2d(in_plane, self.num_ped_anchor_per_loc * self.box_code_size, 1)
+        self.conv_ped_dir = nn.Conv2d(in_plane, self.num_ped_anchor_per_loc * 2, 1)
 
         num_cyc_size = 1
         num_cyc_rot = 2
-        num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
-        self.conv_cyc_cls = nn.Conv2d(in_plane, num_cyc_anchor_per_loc, 1)
-        self.conv_cyc_box = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * self.box_code_size, 1)
-        self.conv_cyc_dir = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * 2, 1)
+        self.num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
+        self.conv_cyc_cls = nn.Conv2d(in_plane, self.num_cyc_anchor_per_loc, 1)
+        self.conv_cyc_box = nn.Conv2d(in_plane, self.num_cyc_anchor_per_loc * self.box_code_size, 1)
+        self.conv_cyc_dir = nn.Conv2d(in_plane, self.num_cyc_anchor_per_loc * 2, 1)
 
     def forward(self, x):
-        batch_size = x.shape[0]
-        veh_cls_preds = self.conv_veh_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        veh_box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        veh_dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        N = x.shape[0]
+        veh_cls_preds = self.conv_veh_cls(x).view(N, -1, 1)
+        veh_box_preds = self.conv_veh_box(x)
+        N, C, H, W = veh_box_preds.shape
+        veh_box_preds = veh_box_preds.view(N, self.num_veh_anchor_per_loc, self.box_code_size, H, W)
+        veh_box_preds = veh_box_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, self.box_code_size)
 
-        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        veh_dir_preds = self.conv_veh_dir(x)
+        N, C, H, W = veh_dir_preds.shape
+        veh_dir_preds = veh_dir_preds.view(N, self.num_veh_anchor_per_loc, 2, H, W)
+        veh_dir_preds = veh_dir_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, 2)
 
-        cyc_cls_preds = self.conv_cyc_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        cyc_box_preds = self.conv_cyc_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        cyc_dir_preds = self.conv_cyc_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        ped_cls_preds = self.conv_ped_cls(x).view(N, -1, 1)
+        ped_box_preds = self.conv_ped_box(x)
+        N, C, H, W = ped_box_preds.shape
+        ped_box_preds = ped_box_preds.view(N, self.num_ped_anchor_per_loc, self.box_code_size, H, W)
+        ped_box_preds = ped_box_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, self.box_code_size)
+
+        ped_dir_preds = self.conv_ped_dir(x)
+        N, C, H, W = ped_dir_preds.shape
+        ped_dir_preds = ped_dir_preds.view(N, self.num_ped_anchor_per_loc, 2, H, W)
+        ped_dir_preds = ped_dir_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, 2)
+
+        cyc_cls_preds = self.conv_cyc_cls(x).view(N, -1, 1)
+        cyc_box_preds = self.conv_cyc_box(x)
+        N, C, H, W = cyc_box_preds.shape
+        cyc_box_preds = cyc_box_preds.view(N, self.num_cyc_anchor_per_loc, self.box_code_size, H, W)
+        cyc_box_preds = cyc_box_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, self.box_code_size)
+
+        cyc_dir_preds = self.conv_cyc_dir(x)
+        N, C, H, W = cyc_dir_preds.shape
+        cyc_dir_preds = cyc_dir_preds.view(N, self.num_cyc_anchor_per_loc, 2, H, W)
+        cyc_dir_preds = cyc_dir_preds.permute(0, 1, 3, 4, 2).contiguous().view(N, -1, 2)
 
         cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
         box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
@@ -667,7 +419,6 @@ class MultiHeads_v1(nn.Module):
 
         return pred_dict
 
-
 class PointPillars(nn.Module):
 
     def __init__(self, config):
@@ -679,9 +430,8 @@ class PointPillars(nn.Module):
                                                             output_shape=config['grid_size'],
                                                             num_input_features=num_rpn_input_filters)
 
-        self.rpn = FPN(num_rpn_input_filters)
-        # self.heads = SingleHeads(self.rpn.out_plane)
-        self.heads = FPNHeads(self.rpn.out_plane)
+        self.rpn = RPN(num_rpn_input_filters)
+        self.heads = MultiHeads(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
         self.rpn_feature_time = 0.0
