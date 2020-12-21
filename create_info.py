@@ -6,9 +6,21 @@ import os
 from framework import box_np_ops
 import copy
 
-data_root = '/home/xy/ST/dataset/inhouse/'
-dataset = 'ntu'
-split = 'eval'
+data_root = '/home/xy/ST/dataset/stels/'
+
+#dataset = 'ntu'
+#dataset = 'soonlee' 
+#dataset = 'mb1_hawpar'
+
+#dataset = 'av1_ji'
+#dataset = 'mb3_ji' 
+#dataset = 'mb3_bb1'
+dataset = 'mb3_cetran_syn_ped'
+
+split = 'train'
+#split = 'eval'
+
+
 relative_path = os.path.join(dataset, split)
 info_path = os.path.join(data_root, relative_path)
 

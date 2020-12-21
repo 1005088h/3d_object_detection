@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars9 import PointPillars
+from networks.pointpillars8 import PointPillars
 # from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ from eval.eval import get_official_eval_result
 
 
 def train():
-    with open('configs/ntusl_20cm.json', 'r') as f:
+    with open('configs/seven_20cm.json', 'r') as f:
         config = json.load(f)
 
     device = torch.device("cuda:0")
@@ -75,6 +75,8 @@ def train():
         print('model loaded')
 
     print("num_trainable parameters:", len(list(net.parameters())))
+    print("num train data:", len(train_dataset))
+    print("num eval data:", len(eval_dataset))
 
     net.train()
     display_step = 50
@@ -101,7 +103,7 @@ def train():
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
+        torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
         optimizer.step()
         # scaler.scale(loss).backward() #loss.backward()
         # scaler.step(optimizer) #optimizer.step()
@@ -252,8 +254,7 @@ def infer():
     print("p3 time : \t\t\t\t%.5f" % (inference.p3 / len_infos))
     print("p4 time : \t\t\t\t%.5f" % (inference.p4 / len_infos))
 
-
-    dt_path = Path(config['data_root']) / config['experiment']
+    dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
 
@@ -263,7 +264,6 @@ def infer():
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-
 
 
 class PointPillarsNode:

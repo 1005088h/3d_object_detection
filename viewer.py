@@ -50,10 +50,10 @@ class PCViewer(QMainWindow):
         self.gt_bbox = None
         self.classes = ["vehicle", "pedestrian", "cyclist"]
 
-        self.config_path = 'configs/ntusl_10cm.json'
+        self.config_path = 'configs/viewer.json'
         self.dataset = None
         self.anchors = None
-        self.augm = False
+        self.augm = True
         self.plot_anchors = True
         self.plot_voxel = True
 
@@ -64,7 +64,7 @@ class PCViewer(QMainWindow):
             config = json.load(f)
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
-        dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
+        dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
         return dataset
 
     def init_ui(self):

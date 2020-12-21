@@ -6,7 +6,7 @@ import time
 from framework.utils import change_default_args
 
 
-### different heads
+### FPN
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -183,7 +183,7 @@ class RPN(nn.Module):
         return x
 
 
-class RPN2(nn.Module):
+class FPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
         # norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
@@ -209,11 +209,10 @@ class RPN2(nn.Module):
         model += [Resnet2(num_filters[0], norm_layer, 0)]
         self.block1 = Sequential(*model)
 
-        model = [ConvTranspose2d(num_filters[0], num_upsample_filters[0], upsample_strides[0],
-                                 stride=upsample_strides[0]),
-                 norm_layer(num_upsample_filters[0]),
+        model = [Conv2d(num_filters[0], num_filters[0], 1),
+                 norm_layer(num_filters[0]),
                  nn.ReLU()]
-        self.deconv1 = Sequential(*model)
+        self.block11 = Sequential(*model)
 
         model = [Conv2d(num_filters[0], num_filters[1], 3, stride=layer_strides[1], padding=1),
                  norm_layer(num_filters[1]),
@@ -222,6 +221,11 @@ class RPN2(nn.Module):
         model += [Resnet2(num_filters[1], norm_layer, 1)]
         model += [Resnet2(num_filters[1], norm_layer, 0)]
         self.block2 = Sequential(*model)
+
+        model = [Conv2d(num_filters[1], num_filters[1], 1),
+                 norm_layer(num_filters[1]),
+                 nn.ReLU()]
+        self.block21 = Sequential(*model)
 
         model = [ConvTranspose2d(num_filters[1], num_upsample_filters[1], upsample_strides[1],
                                  stride=upsample_strides[1]),
@@ -236,6 +240,11 @@ class RPN2(nn.Module):
         model += [Resnet2(num_filters[2], norm_layer, 1)]
         model += [Resnet2(num_filters[2], norm_layer, 0)]
         self.block3 = Sequential(*model)
+
+        model = [Conv2d(num_filters[2], num_filters[2], 1),
+                 norm_layer(num_filters[2]),
+                 nn.ReLU()]
+        self.block21 = Sequential(*model)
 
         model = [ConvTranspose2d(num_filters[2], num_upsample_filters[2], upsample_strides[2],
                                  stride=upsample_strides[2]),
