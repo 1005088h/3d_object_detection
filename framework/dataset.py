@@ -195,7 +195,7 @@ class InferData:
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
         self.grid_size = config['grid_size']
-        self.create_mask_gpu = config['gpu'] == 1
+        self.create_mask_gpu = config['create_mask_gpu'] == 1
         self.dtype = dtype
 
         self.voxel_time = 0.0

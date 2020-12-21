@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8 import PointPillars
+from networks.pointpillars10 import PointPillars
 # from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ from eval.eval import get_official_eval_result
 
 
 def train():
-    with open('configs/seven_20cm.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
 
     device = torch.device("cuda:0")
@@ -192,13 +192,13 @@ def infer():
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
     net.to(device)
-
+    '''
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
     latest_model_path = model_path / 'latest.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
-
+    '''
     # net.half()
     net.eval()
 
@@ -253,7 +253,7 @@ def infer():
     print("p2 time : \t\t\t\t%.5f" % (inference.p2 / len_infos))
     print("p3 time : \t\t\t\t%.5f" % (inference.p3 / len_infos))
     print("p4 time : \t\t\t\t%.5f" % (inference.p4 / len_infos))
-
+    '''
     dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
@@ -264,7 +264,7 @@ def infer():
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-
+    '''
 
 class PointPillarsNode:
     def __init__(self):

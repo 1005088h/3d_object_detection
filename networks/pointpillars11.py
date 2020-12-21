@@ -195,7 +195,7 @@ class FPN(nn.Module):
         num_input_filters = num_rpn_input_filters
         use_direction_classifier = True
         self._use_direction_classifier = use_direction_classifier
-        self.out_plane = 128
+        self.out_plane = 256
 
         norm_layer = change_default_args(eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
         Conv2d = change_default_args(bias=False)(nn.Conv2d)
@@ -221,7 +221,7 @@ class FPN(nn.Module):
         model += [Resnet2(num_filters[1], norm_layer, 0)]
         self.block2 = Sequential(*model)
 
-        model = [Conv2d(num_filters[1], num_filters[1], 1),
+        model = [Conv2d(num_filters[1], self.out_plane, 1),
                  norm_layer(num_filters[1]),
                  nn.ReLU()]
         self.block21 = Sequential(*model)
@@ -239,12 +239,12 @@ class FPN(nn.Module):
         model += [Resnet2(num_filters[2], norm_layer, 0)]
         self.block3 = Sequential(*model)
 
-        model = [Conv2d(num_filters[2], num_filters[2], 1),
+        model = [Conv2d(num_filters[2], self.out_plane, 1),
                  norm_layer(num_filters[2]),
                  nn.ReLU()]
         self.block31 = Sequential(*model)
 
-        model = [ConvTranspose2d(num_filters[2], num_filters[1], 2, stride=2),
+        model = [ConvTranspose2d(self.out_plane, self.out_plane, 2, stride=2),
                  norm_layer(num_upsample_filters[2]),
                  nn.ReLU()]
         self.deconv3 = Sequential(*model)

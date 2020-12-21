@@ -1,10 +1,10 @@
 {
-  "data_root": "/home/xy/ST/dataset/stels",
+  "data_root": "/media/mly/mly_1/xuyan/dataset/stels",
   "model_path": "models/",
   "train_info": ["soonlee/train/data_info.pkl", "ntu/train/data_info.pkl", "mb1_hawpar/train/data_info.pkl", "av1_ji/train/data_info.pkl", "mb3_ji/train/data_info.pkl", "mb3_bb1/train/data_info.pkl", "mb3_cetran_syn_ped/train/data_info.pkl"],
   "eval_info": ["soonlee/eval/data_info.pkl", "ntu/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
-  "experiment": "seven20_pillar8",
+  "experiment": "seven20_pillar10",
   "create_mask_gpu": 0,
   "result_path": "results/",
   "batch_size": 1,
