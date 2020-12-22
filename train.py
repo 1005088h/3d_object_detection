@@ -11,7 +11,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8_shared import PointPillars
+from networks.pointpillars8_mul import PointPillars
 # from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -103,7 +103,7 @@ def train():
         loss_dict = loss_generator.generate(preds_dict, example)
         loss = loss_dict['loss']
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
+        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
         optimizer.step()
         # scaler.scale(loss).backward() #loss.backward()
         # scaler.step(optimizer) #optimizer.step()

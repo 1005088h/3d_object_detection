@@ -243,6 +243,7 @@ class MultiHead(nn.Module):
 
         return pred_dict
 
+
 '''
 class MultiHeads(nn.Module):
 
@@ -297,6 +298,7 @@ class MultiHeads(nn.Module):
 
         return pred_dict
 '''
+
 
 class SharedHead(nn.Module):
 
@@ -418,6 +420,7 @@ class MultiHeads(nn.Module):
         }
 
         return pred_dict
+
 
 class PointPillars(nn.Module):
 
