@@ -5,15 +5,15 @@ import framework.box_np_ops as box_np_ops
 
 from numba import cuda
 
-'''
+
 class AnchorAssigner:
     def __init__(self, config):
         # config['detect_class'] = ["vehicle"] # vehicle, pedestrian, cyclist
         config['detect_class'] = ["vehicle", "pedestrian", "cyclist"]  # vehicle, pedestrian, cyclist
         self.detect_class = config['detect_class']
         config["vehicle"] = {}
-        # config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
-        config["vehicle"]["sizes"] = [[12.6, 2.9, 3.8], [7.5, 2.6, 2.9], [4.6, 2.10, 1.8]]
+        config["vehicle"]["sizes"] = [[4.6, 2.10, 1.8], [7.5, 2.6, 2.9], [12.6, 2.9, 3.8]]
+        # config["vehicle"]["sizes"] = [[12.6, 2.9, 3.8], [7.5, 2.6, 2.9], [4.6, 2.10, 1.8]]
         config["vehicle"]["rotations"] = [0, 1.5707963267948966]
         config["vehicle"]["matched_threshold"] = 0.6
         config["vehicle"]["unmatched_threshold"] = 0.45
@@ -215,8 +215,8 @@ class AnchorAssigner:
         dir_cls_targets = np.concatenate(dir_cls_targets_list)
 
         return labels, bbox_targets, bbox_outside_weights, dir_cls_targets
-'''
 
+'''
 class AnchorAssigner:
     def __init__(self, config):
         config['detect_class'] = ["vehicle", "pedestrian", "cyclist"]  # vehicle, pedestrian, cyclist
@@ -423,7 +423,7 @@ class AnchorAssigner:
         dir_cls_targets = np.concatenate(dir_cls_targets_list)
 
         return labels, bbox_targets, bbox_outside_weights, dir_cls_targets
-
+'''
 
 def similarity_fn(anchors, gt_boxes):
     anchors_rbv = anchors[:, [0, 1, 3, 4, 6]]

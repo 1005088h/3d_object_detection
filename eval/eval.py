@@ -2,7 +2,10 @@ import numpy as np
 import numba
 from .iou import rotate_iou_gpu_eval
 
-def clean_data(gt_anno, dt_anno, current_class, num_points_thresh):
+def get_range(x, y):
+    return np.sqrt(x * x + y * y)
+
+def clean_data(gt_anno, dt_anno, current_class, num_points_thresh, range_thresh):
     ignored_gt, ignored_dt = [], []
     current_cls_name = current_class.lower()
     num_gt = len(gt_anno["name"])
@@ -13,7 +16,7 @@ def clean_data(gt_anno, dt_anno, current_class, num_points_thresh):
         if gt_name == current_cls_name:
             if gt_anno["num_points"][i] == 0:
                 ignored_gt.append(-1)
-            elif gt_anno["num_points"][i] > num_points_thresh:
+            elif gt_anno["num_points"][i] > num_points_thresh and get_range(gt_anno["location"][i][0], gt_anno["location"][i][1]) < range_thresh:
                 ignored_gt.append(0)
                 num_valid_gt += 1
             else:
@@ -331,11 +334,11 @@ def calculate_iou_partly_camera(gt_annos, dt_annos, metric='bev', num_parts=50):
     return overlaps, parted_overlaps, total_gt_num, total_dt_num
 
 
-def _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh):
+def _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh, range_thresh):
     ignored_gts, ignored_dets, dt_score_list = [], [], []
     total_num_valid_gt = 0
     for i in range(len(gt_annos)):
-        num_valid_gt, ignored_gt, ignored_det = clean_data(gt_annos[i], dt_annos[i], current_class, num_points_thresh)
+        num_valid_gt, ignored_gt, ignored_det = clean_data(gt_annos[i], dt_annos[i], current_class, num_points_thresh, range_thresh=range_thresh)
         ignored_gts.append(np.array(ignored_gt, dtype=np.int64))
         ignored_dets.append(np.array(ignored_det, dtype=np.int64))
         dt_score_list.append(dt_annos[i]["score"].astype('float32'))
@@ -351,6 +354,7 @@ def eval_class_AP(gt_annos,
                   min_overlaps,
                   frame,
                   num_points_thresh,
+                  range_thresh,
                   num_parts=50,
                   ):
 
@@ -371,7 +375,7 @@ def eval_class_AP(gt_annos,
     precision = np.zeros([num_class, num_minoverlap, N_SAMPLE_PTS])
     recall = np.zeros([num_class, num_minoverlap, N_SAMPLE_PTS])
     for m, current_class in enumerate(class_names):
-        ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh)
+        ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh, range_thresh=range_thresh)
         for k, min_overlap in enumerate(min_overlaps[current_class]):
             thresholdss = []
             for i in range(len(gt_annos)):
@@ -450,7 +454,7 @@ def get_official_eval_result(gt_annos, dt_annos, class_names):
     eval_str = ''
     for metric in metrics:
         eval_str += '\n#### Metric: %s, num_points > %d\n' % (metric, num_point_threshold)
-        ret = eval_class_AP(gt_annos, dt_annos, class_names, metric, min_overlaps, frame, num_point_threshold)
+        ret = eval_class_AP(gt_annos, dt_annos, class_names, metric, min_overlaps, frame, num_point_threshold, range_thresh=80)
         mAP = get_mAP(ret['precision'])
         results.append(mAP)
         for i, cls in enumerate(class_names):

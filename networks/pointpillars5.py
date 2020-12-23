@@ -1,9 +1,9 @@
-
 import torch
 from torch import nn
 from torch.nn import Sequential
 import functools
 import time
+
 
 class PointNet(nn.Module):
     def __init__(self, num_input_features, voxel_size, offset):
@@ -17,13 +17,12 @@ class PointNet(nn.Module):
 
         # Create PillarFeatureNet layers
         in_channels = num_input_features
-        self.out_channels = 64
+        self.out_channels = 80 #
         model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
 
         self.pfn_layers = nn.Sequential(*model)
-
 
     def forward(self, voxels, num_point_per_voxel, coors):
         # Find distance of x, y, and z from cluster center
@@ -45,7 +44,8 @@ class PointNet(nn.Module):
         # empty pillars remain set to zeros.
         num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
         max_point_per_voxel = features.shape[1]
-        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int, device=num_point_per_voxel.device).view(1, -1)
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
         mask = num_point_per_voxel.int() > max_point_per_voxel
         # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
         mask = torch.unsqueeze(mask, -1).type_as(features)
@@ -99,8 +99,6 @@ class PointPillarsScatter(nn.Module):
 
             # Append to a list for later stacking.
             batch_canvas.append(canvas)
-
-
 
         # Stack to 3-dim tensor (batch-size, nchannels, nrows*ncols)
         batch_canvas = torch.stack(batch_canvas, 0)
@@ -176,6 +174,7 @@ class RPN(nn.Module):
         x = torch.cat([up1, up2, up3], dim=1)
         return x
 
+
 class SingleHead(nn.Module):
 
     def __init__(self, in_plane):
@@ -196,8 +195,8 @@ class SingleHead(nn.Module):
         ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
         ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
 
-        cls_preds =  ped_cls_preds
-        box_preds =  ped_box_preds
+        cls_preds = ped_cls_preds
+        box_preds = ped_box_preds
         dir_cls_preds = ped_dir_preds
 
         pred_dict = {
@@ -207,6 +206,7 @@ class SingleHead(nn.Module):
         }
 
         return pred_dict
+
 
 class MultiHead(nn.Module):
 
@@ -261,6 +261,7 @@ class MultiHead(nn.Module):
 
         return pred_dict
 
+
 class PointPillars(nn.Module):
 
     def __init__(self, config):
@@ -269,11 +270,11 @@ class PointPillars(nn.Module):
         self.pillar_point_net = PointNet(config['num_point_features'], config['voxel_size'], config['detection_offset'])
         num_rpn_input_filters = self.pillar_point_net.out_channels
         self.middle_feature_extractor = PointPillarsScatter(batch_size=config['batch_size'],
-                                                               output_shape=config['grid_size'],
-                                                               num_input_features=num_rpn_input_filters)
+                                                            output_shape=config['grid_size'],
+                                                            num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
-        self.heads = MultiHead(self.rpn.out_plane)#
+        self.heads = MultiHead(self.rpn.out_plane)  #
         # self.heads = SingleHead(self.rpn.out_plane)
         self.voxel_features_time = 0.0
         self.spatial_features_time = 0.0
@@ -302,6 +303,7 @@ class PointPillars(nn.Module):
         self.heads_time += heads_time - rpn_feature_time
 
         return preds_dict
+
 
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):

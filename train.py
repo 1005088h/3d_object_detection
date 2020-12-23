@@ -11,8 +11,8 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8_mul import PointPillars
-# from networks.pointpillars5 import PointPillars
+# from networks.pointpillars8_mul import PointPillars
+from networks.pointpillars2 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -182,7 +182,7 @@ def changeInfo(infos):
 
 
 def infer():
-    with open('configs/ntusl_20cm.json', 'r') as f:
+    with open('configs/ntusl_10cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
@@ -192,13 +192,13 @@ def infer():
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
     net.to(device)
-    '''
+
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / 'latest.pth'
+    latest_model_path = model_path / '190000.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
-    '''
+
     # net.half()
     net.eval()
 
@@ -241,19 +241,19 @@ def infer():
     print("\naverage time : \t\t\t%.5f" % (time_elapse / len_infos))
     print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
     print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
-
+    '''
     print("voxel_features time : \t\t%.5f" % (net.voxel_features_time / len_infos))
     print("spatial_features time : \t%.5f" % (net.spatial_features_time / len_infos))
     print("rpn_feature time : \t\t\t%.5f" % (net.rpn_feature_time / len_infos))
     print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
-
+    '''
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
 
     print("p1 time : \t\t\t\t%.5f" % (inference.p1 / len_infos))
     print("p2 time : \t\t\t\t%.5f" % (inference.p2 / len_infos))
     print("p3 time : \t\t\t\t%.5f" % (inference.p3 / len_infos))
     print("p4 time : \t\t\t\t%.5f" % (inference.p4 / len_infos))
-    '''
+
     dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
     if not os.path.exists(dt_path):
         os.makedirs(dt_path)
@@ -262,9 +262,15 @@ def infer():
         pickle.dump(dt_annos, f)
     gt_annos = [info["annos"] for info in infos]
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
+    #for distance in range(10, 90, 10):
+    #gt_annos = distance_filter(gt_annos, distance)
+    #    dt_annos = distance_filter(dt_annos, distance)
     APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
     print(eval_str)
-    '''
+
+
+
+
 
 class PointPillarsNode:
     def __init__(self):
@@ -334,8 +340,8 @@ class PointPillarsNode:
 
 
 if __name__ == "__main__":
-    train()
-    # infer()
+    # train()
+    infer()
     # PointPillarsNode().spin()
 
 '''

@@ -285,7 +285,7 @@ class MultiHead(nn.Module):
         pred_dict = {
             "cls_preds": cls_preds,
             "box_preds": box_preds,
-            "dir_cls_preds": dir_cls_preds
+            "dir_preds": dir_cls_preds
         }
 
         return pred_dict
