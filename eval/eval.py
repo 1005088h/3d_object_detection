@@ -2,8 +2,10 @@ import numpy as np
 import numba
 from .iou import rotate_iou_gpu_eval
 
+
 def get_range(x, y):
     return np.sqrt(x * x + y * y)
+
 
 def clean_data(gt_anno, dt_anno, current_class, num_points_thresh, range_thresh):
     ignored_gt, ignored_dt = [], []
@@ -16,7 +18,9 @@ def clean_data(gt_anno, dt_anno, current_class, num_points_thresh, range_thresh)
         if gt_name == current_cls_name:
             if gt_anno["num_points"][i] == 0:
                 ignored_gt.append(-1)
-            elif gt_anno["num_points"][i] > num_points_thresh and get_range(gt_anno["location"][i][0], gt_anno["location"][i][1]) < range_thresh:
+            elif not get_range(gt_anno["location"][i][0], gt_anno["location"][i][1]) < range_thresh:
+                ignored_gt.append(-1)
+            elif gt_anno["num_points"][i] > num_points_thresh:
                 ignored_gt.append(0)
                 num_valid_gt += 1
             else:
@@ -26,7 +30,10 @@ def clean_data(gt_anno, dt_anno, current_class, num_points_thresh, range_thresh)
 
     for i in range(num_dt):
         if dt_anno["name"][i].lower() == current_cls_name:
-            ignored_dt.append(0)
+            if get_range(dt_anno["location"][i][0], dt_anno["location"][i][1]) < range_thresh:
+                ignored_dt.append(0)
+            else:
+                ignored_dt.append(-1)
         else:
             ignored_dt.append(-1)
     return num_valid_gt, ignored_gt, ignored_dt
@@ -51,9 +58,9 @@ def get_thresholds(scores: np.ndarray, num_gt, num_sample_pts=41):
         current_recall += 1 / (num_sample_pts - 1.0)
     return thresholds
 
+
 @numba.jit(nopython=True)
 def compute_statistics_jit(overlaps, ignored_gt, ignored_det, dt_scores, min_overlap, thresh=0, compute_fp=False):
-
     det_size = ignored_det.size
     gt_size = ignored_gt.size
     assigned_detection = [False] * det_size
@@ -105,13 +112,13 @@ def compute_statistics_jit(overlaps, ignored_gt, ignored_det, dt_scores, min_ove
 
     if compute_fp:
         for i in range(det_size):
-            if not(assigned_detection[i] or ignored_det[i] == -1 or ignored_threshold[i]):
+            if not (assigned_detection[i] or ignored_det[i] == -1 or ignored_threshold[i]):
                 fp += 1
 
     return tp, fp, fn, thresholds[:thresh_idx]
 
 
-#@numba.jit(nopython=True, parallel=True)
+# @numba.jit(nopython=True, parallel=True)
 @numba.jit(nopython=True)
 def d3_box_overlap_kernel_camera(boxes, qboxes, rinc, criterion=-1):
     N, K = boxes.shape[0], qboxes.shape[0]
@@ -137,7 +144,7 @@ def d3_box_overlap_kernel_camera(boxes, qboxes, rinc, criterion=-1):
                     rinc[i, j] = 0.0
 
 
-#@numba.jit(nopython=True, parallel=True)
+# @numba.jit(nopython=True, parallel=True)
 @numba.jit(nopython=True)
 def d3_box_overlap_kernel_lidar(boxes, qboxes, rinc, criterion=-1):
     N, K = boxes.shape[0], qboxes.shape[0]
@@ -171,6 +178,7 @@ def get_split_parts(num, num_part):
     else:
         return [same_part] * num_part + [remain_num]
 
+
 @numba.jit(nopython=True)
 def fused_compute_statistics(overlaps,
                              pr,
@@ -186,7 +194,7 @@ def fused_compute_statistics(overlaps,
     for i in range(gt_nums.shape[0]):
         for t, thresh in enumerate(thresholds):
             overlap = overlaps[dt_num:dt_num + dt_nums[i], gt_num:
-                               gt_num + gt_nums[i]]
+                                                           gt_num + gt_nums[i]]
 
             ignored_gt = ignored_gts[gt_num:gt_num + gt_nums[i]]
             ignored_det = ignored_dets[dt_num:dt_num + dt_nums[i]]
@@ -207,11 +215,13 @@ def fused_compute_statistics(overlaps,
         gt_num += gt_nums[i]
         dt_num += dt_nums[i]
 
+
 def d3_box_overlap_camera(boxes, qboxes, criterion=-1):
     rinc = rotate_iou_gpu_eval(boxes[:, [0, 2, 3, 5, 6]],
                                qboxes[:, [0, 2, 3, 5, 6]], 2)
     d3_box_overlap_kernel_camera(boxes, qboxes, rinc, criterion)
     return rinc
+
 
 def d3_box_overlap_lidar(boxes, qboxes, criterion=-1):
     rinc = rotate_iou_gpu_eval(boxes[:, [0, 1, 3, 4, 6]],
@@ -219,9 +229,11 @@ def d3_box_overlap_lidar(boxes, qboxes, criterion=-1):
     d3_box_overlap_kernel_lidar(boxes, qboxes, rinc, criterion)
     return rinc
 
+
 def bev_box_overlap(boxes, qboxes, criterion=-1):
     riou = rotate_iou_gpu_eval(boxes, qboxes, criterion)
     return riou
+
 
 def calculate_iou_partly_lidar(gt_annos, dt_annos, metric='bev', num_parts=50):
     num_examples = len(gt_annos)
@@ -267,15 +279,15 @@ def calculate_iou_partly_lidar(gt_annos, dt_annos, metric='bev', num_parts=50):
             dt_box_num = total_dt_num[example_idx + i]
             overlaps.append(
                 parted_overlaps[j][gt_num_idx:gt_num_idx + gt_box_num,
-                                   dt_num_idx:dt_num_idx + dt_box_num])
+                dt_num_idx:dt_num_idx + dt_box_num])
             gt_num_idx += gt_box_num
             dt_num_idx += dt_box_num
         example_idx += num_part
 
-    return overlaps, parted_overlaps, total_gt_num, total_dt_num#, split_parts
+    return overlaps, parted_overlaps, total_gt_num, total_dt_num  # , split_parts
+
 
 def calculate_iou_partly_camera(gt_annos, dt_annos, metric='bev', num_parts=50):
-
     assert len(gt_annos) == len(dt_annos)
     total_dt_num = np.stack([len(a["name"]) for a in dt_annos], 0)
     total_gt_num = np.stack([len(a["name"]) for a in gt_annos], 0)
@@ -326,7 +338,7 @@ def calculate_iou_partly_camera(gt_annos, dt_annos, metric='bev', num_parts=50):
             dt_box_num = total_dt_num[example_idx + i]
             overlaps.append(
                 parted_overlaps[j][gt_num_idx:gt_num_idx + gt_box_num,
-                                   dt_num_idx:dt_num_idx + dt_box_num])
+                dt_num_idx:dt_num_idx + dt_box_num])
             gt_num_idx += gt_box_num
             dt_num_idx += dt_box_num
         example_idx += num_part
@@ -338,7 +350,8 @@ def _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh, range_th
     ignored_gts, ignored_dets, dt_score_list = [], [], []
     total_num_valid_gt = 0
     for i in range(len(gt_annos)):
-        num_valid_gt, ignored_gt, ignored_det = clean_data(gt_annos[i], dt_annos[i], current_class, num_points_thresh, range_thresh=range_thresh)
+        num_valid_gt, ignored_gt, ignored_det = clean_data(gt_annos[i], dt_annos[i], current_class, num_points_thresh,
+                                                           range_thresh=range_thresh)
         ignored_gts.append(np.array(ignored_gt, dtype=np.int64))
         ignored_dets.append(np.array(ignored_det, dtype=np.int64))
         dt_score_list.append(dt_annos[i]["score"].astype('float32'))
@@ -357,7 +370,6 @@ def eval_class_AP(gt_annos,
                   range_thresh,
                   num_parts=50,
                   ):
-
     assert len(gt_annos) == len(dt_annos)
     num_examples = len(gt_annos)
     split_parts = get_split_parts(num_examples, num_parts)
@@ -375,7 +387,10 @@ def eval_class_AP(gt_annos,
     precision = np.zeros([num_class, num_minoverlap, N_SAMPLE_PTS])
     recall = np.zeros([num_class, num_minoverlap, N_SAMPLE_PTS])
     for m, current_class in enumerate(class_names):
-        ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class, num_points_thresh, range_thresh=range_thresh)
+        ignored_gts, ignored_dets, dt_score_list, total_num_valid_gt = _prepare_data(gt_annos, dt_annos, current_class,
+                                                                                     num_points_thresh,
+                                                                                     range_thresh=range_thresh)
+        # print('%s: total_num_valid_gt:%d' %(current_class, total_num_valid_gt))
         for k, min_overlap in enumerate(min_overlaps[current_class]):
             thresholdss = []
             for i in range(len(gt_annos)):
@@ -442,19 +457,21 @@ def get_mAP(prec):
         anno['rotation_y'] = - anno['rotation_y'] - np.pi / 2
 '''
 
-def get_official_eval_result(gt_annos, dt_annos, class_names):
-    min_overlaps = {'vehicle':    [0.7, 0.5],
-                    'pedestrian': [0.5, 0.25],
-                    'cyclist':    [0.5, 0.25]}
 
-    metrics = ['bev', '3d']     # bev, 3d
-    frame = 'lidar'             # lidar, camera
-    num_point_threshold = 5     # 0, 5, 10
+def get_official_eval_result(gt_annos, dt_annos, class_names, range_thresh):
+    min_overlaps = {'vehicle': [0.7, 0.5],
+                    'pedestrian': [0.5, 0.25],
+                    'cyclist': [0.5, 0.25]}
+
+    metrics = ['bev', '3d']  # bev, 3d
+    frame = 'lidar'  # lidar, camera
+    num_point_threshold = 5  # 0, 5, 10
     results = []
     eval_str = ''
     for metric in metrics:
-        eval_str += '\n#### Metric: %s, num_points > %d\n' % (metric, num_point_threshold)
-        ret = eval_class_AP(gt_annos, dt_annos, class_names, metric, min_overlaps, frame, num_point_threshold, range_thresh=80)
+        eval_str += '\n#### Metric: %s, num_points > %d and range < %.2f\n' % (metric, num_point_threshold, range_thresh)
+        ret = eval_class_AP(gt_annos, dt_annos, class_names, metric, min_overlaps, frame, num_point_threshold,
+                            range_thresh=range_thresh)
         mAP = get_mAP(ret['precision'])
         results.append(mAP)
         for i, cls in enumerate(class_names):

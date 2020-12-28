@@ -12,7 +12,7 @@ from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
 # from networks.pointpillars8_mul import PointPillars
-from networks.pointpillars2 import PointPillars
+from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -162,6 +162,7 @@ def train():
 
 
 def changeInfo(infos):
+    person_total = 0
     for idx, info in enumerate(infos):
         if len(info['annos']['name']) > 0:
             difficulty_mask = info['annos']["num_points"] > 0
@@ -171,6 +172,7 @@ def changeInfo(infos):
             truck_mask = info['annos']['name'] == 'truck'
             bus_mask = info['annos']['name'] == 'bus'
             person_mask = info['annos']['name'] == 'person'
+            person_total += person_mask.sum()
             bicycle_mask = info['annos']['name'] == 'bicycle'
             motorbike_mask = info['annos']['name'] == 'motorbike'
             vehicle_mask = car_mask | truck_mask | bus_mask
@@ -182,7 +184,7 @@ def changeInfo(infos):
 
 
 def infer():
-    with open('configs/ntusl_10cm.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
@@ -194,7 +196,7 @@ def infer():
     net.to(device)
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '190000.pth'
+    latest_model_path = model_path / '185000.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
@@ -262,14 +264,9 @@ def infer():
         pickle.dump(dt_annos, f)
     gt_annos = [info["annos"] for info in infos]
     eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
-    #for distance in range(10, 90, 10):
-    #gt_annos = distance_filter(gt_annos, distance)
-    #    dt_annos = distance_filter(dt_annos, distance)
-    APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
-    print(eval_str)
-
-
-
+    for range_thresh in np.arange(10.0, 90.0, 10.0):
+        APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes, range_thresh)
+        print(eval_str)
 
 
 class PointPillarsNode:

@@ -11,12 +11,15 @@ cd ./object3d_det/
 
 It is recommend to use Anaconda package manager.
 
+Install pytorch 
+
 ```bash
-conda install scikit-image scipy numba pillow matplotlib
+conda install scikit-image scipy numba pillow matplotlib 
 ```
 
 ```bash
-pip install opencv-python
+pip install opencv-python shapely PyOpenGL pyqtgraph
+
 ```
 
 ### 3. Setup cuda for numba
