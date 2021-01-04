@@ -11,8 +11,8 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-# from networks.pointpillars8_mul import PointPillars
-from networks.pointpillars5 import PointPillars
+from networks.pointpillars8_shared import PointPillars
+# from networks.pointpillars5 import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -22,7 +22,7 @@ from eval.eval import get_official_eval_result
 def train():
     with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
-
+    # cuda_id = config['device']
     device = torch.device("cuda:0")
     config['device'] = device
     voxel_generator = VoxelGenerator(config)
@@ -153,7 +153,7 @@ def train():
             gt_annos = copy.deepcopy(eval_annos)
 
             eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
-            APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes)
+            APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes, 1000.0)
             log_str = '\nStep: %d%s' % (step, eval_str)
             print(log_str)
             with open(log_file, 'a+') as f:
@@ -196,7 +196,7 @@ def infer():
     net.to(device)
 
     model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    latest_model_path = model_path / '185000.pth'
+    latest_model_path = model_path / '265000.pth'
     checkpoint = torch.load(latest_model_path)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')

@@ -133,6 +133,7 @@ class GenericDataset(Dataset):
             gt_classes = gt_classes[range_mask]
             gt_names = gt_names[range_mask]
             difficulty = difficulty[range_mask]
+
             gt_boxes[:, 6] = box_np_ops.limit_period(gt_boxes[:, 6], offset=0.5, period=2 * np.pi)
             example['annos'] = {'gt_classes': gt_classes, 'gt_boxes': gt_boxes, 'difficulty': difficulty,
                                 'gt_names': gt_names}

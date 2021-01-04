@@ -17,7 +17,7 @@ class LossGenerator:
         self.loc_loss_type = WeightedSmoothL1LocalizationLoss()
         self.cls_loss_type = SigmoidFocalClassificationLoss()
         self.dir_loss_type = WeightedSoftmaxClassificationLoss()
-        self._loc_loss_weight = 2.0
+        self._loc_loss_weight = 0.25
         self._cls_loss_weight = 1.0
         self._direction_loss_weight = 0.2
         self._use_direction_classifier = True

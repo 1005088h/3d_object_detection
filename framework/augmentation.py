@@ -194,7 +194,7 @@ def noise_per_object(gt_boxes,
     global_rot_noises = np.random.uniform(-global_random_rot_range, global_random_rot_range, size=[num_boxes, num_try])
     point_masks = box_np_ops.points_in_rbbox(points, gt_boxes)
     enable_grot = False
-    if global_random_rot_range > (0.1 / 180) * np.pi:
+    if global_random_rot_range > (0.01 / 180) * np.pi:
         enable_grot = True
     if not enable_grot:
         selected_noise = noise_per_box(gt_boxes[:, [0, 1, 3, 4, 6]],

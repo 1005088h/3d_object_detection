@@ -17,7 +17,7 @@ class PointNet(nn.Module):
 
         # Create PillarFeatureNet layers
         in_channels = num_input_features
-        self.out_channels = 80 #
+        self.out_channels = 64 #
         model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
                  nn.ReLU(True)]
