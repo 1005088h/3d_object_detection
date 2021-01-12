@@ -16,9 +16,11 @@ class GenericDataset(Dataset):
         self.data_root = Path(config['data_root'])
         self.infos = []
         for info_path in info_paths:
+            print(info_path)
             info_path = self.data_root / info_path
             with open(info_path, 'rb') as f:
                 self.infos += pickle.load(f)
+                print(len(self.infos))
         self.num_point_features = config['num_point_features']
         self.voxel_generator = voxel_generator
         self.anchor_assigner = anchor_assigner
@@ -77,6 +79,10 @@ class GenericDataset(Dataset):
         vehicle_total = car_total + truck_total + bus_total
         pedestrian_total = person_total
         cyclist_total = bicycle_total + motorbike_total
+        print("num vehicle: ", vehicle_total)
+        print("num pedestrian: ", pedestrian_total)
+        print("num cyclist: ", cyclist_total)
+
 
     def __len__(self):
         return len(self.infos)

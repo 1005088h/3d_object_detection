@@ -4,22 +4,21 @@ from torch.nn import Sequential
 import functools
 import time
 from framework.utils import change_default_args
+import numpy as np
+import pycuda.driver as cuda
+import pycuda.autoinit
+
+pycuda.driver.Device(0).retain_primary_context()
 
 
 ### change anchor order, shared head
 
 class PointNet(nn.Module):
-    def __init__(self, num_input_features, voxel_size, offset):
+    def __init__(self):
         super().__init__()
-        self.name = 'PointNet'
-        num_input_features += 5  # 9
-        self.vx = voxel_size[0]
-        self.vy = voxel_size[1]
-        self.x_offset = self.vx / 2 + offset[0]
-        self.y_offset = self.vy / 2 + offset[1]
 
         # Create PillarFeatureNet layers
-        in_channels = num_input_features
+        in_channels = 9
         self.out_channels = 64
         model = [nn.Conv1d(in_channels, self.out_channels, kernel_size=1, padding=0, bias=False),
                  nn.BatchNorm1d(self.out_channels),
@@ -27,37 +26,12 @@ class PointNet(nn.Module):
 
         self.pfn_layers = nn.Sequential(*model)
 
-    def forward(self, voxels, num_point_per_voxel, coors):
-        # Find distance of x, y, and z from cluster center
-        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
-        f_cluster = voxels[:, :, :3] - points_mean
-
-        # Find distance of x and y from pillar center
-        f_center = torch.zeros_like(voxels[:, :, :2])
-        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
-        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
-
-        # Combine together feature decorations
-        features_ls = [voxels, f_cluster, f_center]
-
-        features = torch.cat(features_ls, dim=-1)
-
-        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
-        # empty pillars remain set to zeros.
-        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
-        max_point_per_voxel = features.shape[1]
-        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
-                                           device=num_point_per_voxel.device).view(1, -1)
-        mask = num_point_per_voxel.int() > max_point_per_voxel
-        # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
-        mask = torch.unsqueeze(mask, -1).type_as(features)
-        features *= mask
-
+    def forward(self, features):
         # Forward pass through PFNLayers
         x = features.permute(0, 2, 1).contiguous()
         x = self.pfn_layers(x).permute(0, 2, 1).contiguous()
         x_max = torch.max(x, dim=1, keepdim=True)[0]
-        return x_max.squeeze()
+        return x_max.squeeze(dim=1)
 
 
 class PointPillarsScatter(nn.Module):
@@ -111,22 +85,42 @@ class PointPillarsScatter(nn.Module):
         return batch_canvas
 
 
+class Scatter(nn.Module):
+    def __init__(self, output_shape, num_input_features=64):
+        super().__init__()
+        self.output_shape = output_shape
+        self.nx = output_shape[0]
+        self.ny = output_shape[1]
+        self.num_channels = num_input_features
+
+    def forward(self, voxel_features, coords):
+        # Create the canvas for this sample
+        canvas = torch.zeros(self.num_channels, self.nx * self.ny, dtype=voxel_features.dtype,
+                             device=voxel_features.device)
+        indices = coords[:, 0] * self.ny + coords[:, 1]
+        indices = indices.type(torch.long)
+        voxels = voxel_features.t()
+
+        canvas[:, indices] = voxels
+
+        canvas = canvas.view(1, self.num_channels, self.nx, self.ny)
+
+        return canvas
+
+
 class RPN(nn.Module):
     def __init__(self, num_rpn_input_filters):
         super().__init__()
-        # norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
-        layer_nums = [2, 4, 4]
+
         layer_strides = [2, 2, 2]
         num_filters = [64, 128, 256]
         upsample_strides = [1, 2, 4]
-        num_upsample_filters = [64, 128, 128]
+        num_upsample_filters = [64, 128, 128]  # [128, 128, 128]
         num_input_filters = num_rpn_input_filters
-        use_direction_classifier = True
-        self._use_direction_classifier = use_direction_classifier
+
         self.out_plane = sum(num_upsample_filters)
 
-        norm_layer = change_default_args(
-            eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
+        norm_layer = change_default_args(eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
         Conv2d = change_default_args(bias=False)(nn.Conv2d)
         ConvTranspose2d = change_default_args(bias=False)(nn.ConvTranspose2d)
 
@@ -344,16 +338,64 @@ class SharedHead(nn.Module):
         return pred_dict
 
 
+def export(model, input, onnx_file_path, dynamic=False):
+    import onnx
+    if dynamic:
+        torch.onnx.export(model, input, onnx_file_path, verbose=False, input_names=['input'], output_names=['output'],
+                          dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
+    else:
+        torch.onnx.export(model, input, onnx_file_path, verbose=False, opset_version=12)
+
+    onnx_model = onnx.load(onnx_file_path)
+    onnx.checker.check_model(onnx_model)
+    onnx.helper.printable_graph(onnx_model.graph)
+
+
+def build_engine(onnx_file_path, trt_engine_path, dynamic=False):
+    import tensorrt as trt
+    TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+    EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+    with trt.Builder(TRT_LOGGER) as builder, builder.create_network(EXPLICIT_BATCH) as network, trt.OnnxParser(network,
+                                                                                                               TRT_LOGGER) as parser:
+        builder.max_batch_size = 1  # always 1 for explicit batch
+        with open(onnx_file_path, 'rb') as model:
+            parser.parse(model.read())
+
+        config = builder.create_builder_config()
+        config.max_workspace_size = 1 << 30
+        # config.flags = 1 << (int)(trt.BuilderFlag.FP16)
+        if dynamic:
+            profile = builder.create_optimization_profile()
+            profile.set_shape("input", (1, 15, 9), (16000, 15, 9), (16000, 15, 9))
+            config.add_optimization_profile(profile)
+        print(network.num_layers)
+        engine = builder.build_engine(network, config)
+        with open(trt_engine_path, 'wb') as f:
+            f.write(engine.serialize())
+        return engine
+
+
+def load_engine_context(trt_engine_path):
+    import tensorrt as trt
+    TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+    with open(trt_engine_path, 'rb') as f, trt.Runtime(TRT_LOGGER) as runtime:
+        engine = runtime.deserialize_cuda_engine(f.read())
+    return engine.create_execution_context()
+
+
 class PointPillars(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         self.device = config['device']
-        self.pillar_point_net = PointNet(config['num_point_features'], config['voxel_size'], config['detection_offset'])
+        self.pillar_point_net = PointNet()
         num_rpn_input_filters = self.pillar_point_net.out_channels
-        self.middle_feature_extractor = PointPillarsScatter(batch_size=config['batch_size'],
-                                                            output_shape=config['grid_size'],
-                                                            num_input_features=num_rpn_input_filters)
+        # self.middle_feature_extractor = PointPillarsScatter(batch_size=config['batch_size'],
+        #                                                     output_shape=config['grid_size'],
+        #                                                     num_input_features=num_rpn_input_filters)
+
+        self.middle_feature_extractor = Scatter(output_shape=config['grid_size'],
+                                                num_input_features=num_rpn_input_filters)
 
         self.rpn = RPN(num_rpn_input_filters)
         self.heads = SharedHead(self.rpn.out_plane)
@@ -362,15 +404,81 @@ class PointPillars(nn.Module):
         self.rpn_feature_time = 0.0
         self.heads_time = 0.0
 
+        voxel_size = config['voxel_size']
+        offset = config['detection_offset']
+        self.vx = voxel_size[0]
+        self.vy = voxel_size[1]
+        self.x_offset = self.vx / 2 + offset[0]
+        self.y_offset = self.vy / 2 + offset[1]
+
+        import tensorrt as trt
+        trt_engine_path = '../deployment/pfn_test.engine'
+        self.context = load_engine_context(trt_engine_path)
+
+        # dynamic shape, batch size
+        self.context.active_optimization_profile = 0
+
+        max_input_shape = (16000, 15, 9)
+        self.context.set_binding_shape(0, max_input_shape)
+        size = trt.volume(max_input_shape) * np.dtype(np.float32).itemsize
+        self.d_input = cuda.mem_alloc(size)
+        self.h_output = cuda.pagelocked_empty(trt.volume(self.context.get_binding_shape(1)), dtype=np.float32)
+        self.d_output = cuda.mem_alloc(self.h_output.nbytes)
+
     def forward(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        # Find distance of x, y, and z from cluster center
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        # Find distance of x and y from pillar center
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        # Combine together feature decorations
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
+        # empty pillars remain set to zeros.
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        # start = time.time()
+        # voxel_features = self.pillar_point_net(features)
+        # torch.cuda.synchronize()
+        # voxel_features_time = time.time()
+
+        h_input = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        self.context.set_binding_shape(0, h_input.shape)
+        stream = cuda.Stream()
+        cuda.memcpy_htod_async(self.d_input, h_input, stream)
+
         start = time.time()
-        voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"],
-                                               example["coordinates"])
-        torch.cuda.synchronize()
+        self.context.execute_async_v2(bindings=[int(self.d_input), int(self.d_output)], stream_handle=stream.handle)
+        stream.synchronize()
         voxel_features_time = time.time()
-        spatial_features = self.middle_feature_extractor(voxel_features, example["coordinates"])
+
+        cuda.memcpy_dtoh_async(self.h_output, self.d_output, stream)
+        stream.synchronize()
+        size = h_input.shape[0] * 64
+        h_output = self.h_output[:size]
+        voxel_features = torch.Tensor(h_output).cuda().view(features.shape[0], -1)
+
+        spatial_features = self.middle_feature_extractor(voxel_features, coors)
         torch.cuda.synchronize()
         spatial_features_time = time.time()
+
         rpn_feature = self.rpn(spatial_features)
         torch.cuda.synchronize()
         rpn_feature_time = time.time()
@@ -382,6 +490,82 @@ class PointPillars(nn.Module):
         self.spatial_features_time += spatial_features_time - voxel_features_time
         self.rpn_feature_time += rpn_feature_time - spatial_features_time
         self.heads_time += heads_time - rpn_feature_time
+
+        return preds_dict
+
+    def trt_infer(self, h_input):
+        self.context.set_binding_shape(0, h_input.shape)
+        stream = cuda.Stream()
+        cuda.memcpy_htod_async(self.d_input, h_input, stream)
+        self.context.execute_async_v2(bindings=[int(self.d_input), int(self.d_output)], stream_handle=stream.handle)
+        cuda.memcpy_dtoh_async(self.h_output, self.d_output, stream)
+        stream.synchronize()
+        size = h_input.shape[0] * 64
+        h_output = self.h_output[:size]
+        return h_output
+
+    def export(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        # Find distance of x, y, and z from cluster center
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        # Find distance of x and y from pillar center
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        # Combine together feature decorations
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
+        # empty pillars remain set to zeros.
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        voxel_features = self.pillar_point_net(features).squeeze()
+        # onnx_file_path = 'pfn_test.onnx'
+        # trt_engine_path = 'pfn_test.engine'
+        # export(self.pillar_point_net, features, onnx_file_path, dynamic=True)
+        # build_engine(onnx_file_path, trt_engine_path, dynamic=True)
+        # exit(0)
+
+        # context = load_engine_context(trt_engine_path)
+        # h_input = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        # h_output = trt_infer(context, h_input)
+        # voxel_features = torch.Tensor(h_output).view(features.shape[0], -1)
+        # voxel_features_np = voxel_features.view(-1).cpu().numpy()
+
+        spatial_features = self.middle_feature_extractor(voxel_features, coors)
+        onnx_file_path = '../deployment/scatter.onnx'
+        trt_engine_path = '../deployment/scatter.engine'
+        # import tensorrt as trt
+        # PLUGIN_CREATORS = trt.get_plugin_registry().plugin_creator_list
+        # for plugin_creator in PLUGIN_CREATORS:
+        #     print(plugin_creator.name)
+
+        export(self.middle_feature_extractor, (voxel_features, coors), onnx_file_path, dynamic=False)
+        build_engine(onnx_file_path, trt_engine_path, dynamic=False)
+        exit(0)
+
+        rpn_feature = self.rpn(spatial_features)
+        preds_dict = self.heads(rpn_feature)
+
+        # self.voxel_features_time += voxel_features_time - start
+        # self.spatial_features_time += spatial_features_time - voxel_features_time
+        # self.rpn_feature_time += rpn_feature_time - spatial_features_time
+        # self.heads_time += heads_time - rpn_feature_time
 
         return preds_dict
 

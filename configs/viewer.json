@@ -1,8 +1,10 @@
 {
-  "data_root": "/home/xy/ST/dataset/stels/",
-  "model_path": "models/",
-  "train_info": ["mb3_cetran_syn_ped/train/data_info.pkl"],
-  "eval_info": ["soonlee/eval/data_info.pkl", "ntu/eval/data_info.pkl"],
+  "data_root": "/home/xy/ST/object3d_det/dataset/stels",
+  "model_path": "/home/xy/ST/object3d_det/experiments/models",
+  "train_info": ["av1_ji/train/data_info.pkl", "mb1_hawpar/train/data_info.pkl", "mb3_bb1/train/data_info.pkl", "mb3_bb2/train/data_info.pkl",
+    "mb3_cetran_syn_ped/train/data_info.pkl", "mb3_ji/train/data_info.pkl", "ntu/train/data_info.pkl", "soonlee/train/data_info.pkl"],
+  "eval_info": ["av1_ji/eval/data_info.pkl", "mb3_bb1/eval/data_info.pkl", "mb3_bb2/eval/data_info.pkl", "mb3_cetran_syn_ped/eval/data_info.pkl"
+  ,"mb3_ji/eval/data_info.pkl", "ntu/eval/data_info.pkl", "soonlee/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
   "experiment": "ntusl_pillar9",
   "create_mask_gpu": 0,

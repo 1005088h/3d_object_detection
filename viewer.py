@@ -30,6 +30,7 @@ from framework.anchor_assigner import AnchorAssigner
 from framework.voxel_generator import VoxelGenerator
 from framework.dataset import GenericDataset
 
+
 class PCViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -53,10 +54,9 @@ class PCViewer(QMainWindow):
         self.config_path = 'configs/viewer.json'
         self.dataset = None
         self.anchors = None
-        self.augm = True
+        self.augm = False
         self.plot_anchors = True
         self.plot_voxel = True
-
 
     def build_dataset(self):
 
@@ -65,6 +65,7 @@ class PCViewer(QMainWindow):
         voxel_generator = VoxelGenerator(config)
         anchor_assigner = AnchorAssigner(config)
         dataset = GenericDataset(config, config['train_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
+        # dataset = GenericDataset(config, config['eval_info'], voxel_generator, anchor_assigner, training=True, augm=self.augm)
         return dataset
 
     def init_ui(self):
@@ -184,7 +185,6 @@ class PCViewer(QMainWindow):
         print(self.current_idx)
         self.plot_all(self.current_idx)
 
-
     def plot_all(self, idx):
         self.w_plt.reset_plot()
         self.load_info(idx)
@@ -203,7 +203,6 @@ class PCViewer(QMainWindow):
                 self.current_image = None
         else:
             self.current_image = None
-
 
         if self.plot_voxel:
             self.points = []
@@ -228,12 +227,10 @@ class PCViewer(QMainWindow):
             self.anchors = self.anchors[:100]
             '''
 
-
     def plot_image(self):
         if self.current_image is not None:
             self.w_plt.ax.imshow(self.current_image)
             self.w_plt.draw()
-
 
     def plot_pointcloud(self):
         point_color = self.w_config.get("PointColor")[:3]
@@ -273,7 +270,6 @@ class PCViewer(QMainWindow):
         if self.plot_anchors:
             self.plot_anchors_in_pointcloud()
 
-
         self.w_pc_viewer.scatter(
             "pointcloud", self.points[:, :3], point_color, size=point_size)
 
@@ -288,7 +284,7 @@ class PCViewer(QMainWindow):
             scores = detection_anno['score']
             label = detection_anno['name']
 
-            #num_points = detection_anno['num_points']
+            # num_points = detection_anno['num_points']
 
             dt_box_lidar = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1)
             dt_boxes_corners = box_np_ops.center_to_corner_box3d(
@@ -318,13 +314,14 @@ class PCViewer(QMainWindow):
             dt_boxes_corners_cam_p2 = box_np_ops.project_to_image(dt_boxes_corners_cam, P2)
             dt_boxes_corners_cam_p2 = dt_boxes_corners_cam_p2.reshape([-1, 8, 2])
             '''
-            #print(len(label), len(scores),len(dt_box_lidar),len(dt_to_gt_box_iou))
+            # print(len(label), len(scores),len(dt_box_lidar),len(dt_to_gt_box_iou))
             if self.gt_boxes is not None and self.gt_boxes.shape[0] > 0:
                 dt_scores_text = [
                     # f'score={s:.2f}, iou={i:.2f}'
                     # for s, i in zip(label, dt_to_gt_box_iou)
                     f'label={l}, score={s:.2f}, x={x:.2f}, y={y:.2f}, iou_2d={iou:.2f}'
-                    for i, (l, s, x, y, iou) in enumerate(zip(label, scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou))
+                    for i, (l, s, x, y, iou) in
+                    enumerate(zip(label, scores, dt_box_lidar[:, 0], dt_box_lidar[:, 1], dt_to_gt_box_iou))
                 ]
             else:
                 dt_scores_text = [
@@ -346,7 +343,7 @@ class PCViewer(QMainWindow):
         if self.gt_names is not None and len(self.gt_names) > 0:
             gt_box_color = self.w_config.get("GTBoxColor")[:3]
             gt_box_color = (*gt_box_color, self.w_config.get("GTBoxAlpha"))
-            #diff = self.difficulty.tolist()
+            # diff = self.difficulty.tolist()
 
             labels_ = [
                 "%s, %.3f" % (i, bx[6]) for i, bx in zip(self.gt_names, self.gt_boxes)
@@ -381,8 +378,6 @@ class PCViewer(QMainWindow):
                 origin=[0.5, 0.5, 0.5],
                 axis=2)
             self.w_pc_viewer.boxes3d("anchors", boxes_corners, anchors_color, 3.0, 1.0)
-
-
 
     def on_panel_clicked(self):
         if self.w_config.isHidden():
@@ -453,12 +448,11 @@ class PCViewer(QMainWindow):
             self.on_nextOrPrevPressed(False)
 
     def print_str(self, value, *arg):
-        #self.strprint.flush()
+        # self.strprint.flush()
         self.sstream.truncate(0)
         self.sstream.seek(0)
         print(value, *arg, file=self.sstream)
         return self.sstream.getvalue()
-
 
     def draw_gt_in_image(self):
         if self.info is None:
@@ -486,7 +480,7 @@ class PCViewer(QMainWindow):
         inside_mask = []
         for i in range(boxes_3d_p2.shape[0]):
             corners = boxes_3d_p2[i]
-            inside_xmin = 0 < corners[:, 0]  #&& 0 < corners[:, 1] < imsize[1])
+            inside_xmin = 0 < corners[:, 0]  # && 0 < corners[:, 1] < imsize[1])
             inside_xmax = corners[:, 0] < imsize[1]
             inside_x = inside_xmin & inside_xmax
 
@@ -496,7 +490,7 @@ class PCViewer(QMainWindow):
             inside = (inside_x & inside_y).any()
             inside_mask.append(inside)
 
-        #print(boxes_3d_p2)
+        # print(boxes_3d_p2)
         boxes_3d_p2 = boxes_3d_p2[inside_mask]
         '''
         bbox_crop = (min(imsize[0], bbox_crop[0]),
@@ -511,8 +505,6 @@ class PCViewer(QMainWindow):
         if self.current_image is not None:
             bbox_plot.draw_3d_bbox_in_ax(
                 self.w_plt.ax, boxes_3d_p2, colors='b')
-
-
 
     def save_pointcloud(self, idx):
         point_color = self.w_config.get("PointColor")[:3]
@@ -529,8 +521,8 @@ class PCViewer(QMainWindow):
             point_color[gt_point_mask] = gt_point_color
 
         range = np.array([self.w_config.get("CoorsRange")])
-        #range = np.zeros(range.shape, dtype=range.dtype)
-        #range[0] = [-30, -38.4, -10.5, 51.92, 38.4, 9.5]
+        # range = np.zeros(range.shape, dtype=range.dtype)
+        # range[0] = [-30, -38.4, -10.5, 51.92, 38.4, 9.5]
         bbox = box_np_ops.minmax_to_corner_3d(range)
         self.w_pc_viewer.boxes3d("bound", bbox, GLColor.Green)
 

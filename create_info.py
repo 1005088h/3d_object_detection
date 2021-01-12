@@ -1,21 +1,23 @@
 from skimage import io
 import pickle
 import numpy as np
-import fire
 import os
 from framework import box_np_ops
 import copy
 
-data_root = '/home/xy/ST/dataset/stels/'
+data_root = '/home/xy/ST/object3d_det/dataset/stels'
 
 #dataset = 'ntu'
 #dataset = 'soonlee' 
 #dataset = 'mb1_hawpar'
-
 #dataset = 'av1_ji'
+
 #dataset = 'mb3_ji' 
 #dataset = 'mb3_bb1'
 dataset = 'mb3_cetran_syn_ped'
+#dataset = 'mb3_bb2'
+
+
 
 split = 'train'
 #split = 'eval'
@@ -24,8 +26,6 @@ split = 'train'
 relative_path = os.path.join(dataset, split)
 info_path = os.path.join(data_root, relative_path)
 
-#data_path = '/home/xy/ST/dataset/inhouse/soonlee/eval' #000294
-#data_path = '/home/xy/ST/dataset/inhouse/soonlee/train' #003258
 waymo = False
 waymo_idx = [0, 1, 2, 3, 5, 6, 7]
 
