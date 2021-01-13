@@ -72,6 +72,10 @@ class VoxelGenerator_trt:
         voxel_num = points_to_voxels(points, voxels, num_points_per_voxel, coors, coor_to_voxelidx, self.voxel_size,
                                      self.offset, self.grid_size, self.max_voxels, self.max_num_points)
 
+        coors = coors[:voxel_num]
+        voxels = voxels[:voxel_num]
+        num_points_per_voxel = num_points_per_voxel[:voxel_num]
+
         return voxels, coors, num_points_per_voxel, voxel_num
 
 

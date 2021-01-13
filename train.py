@@ -4,7 +4,7 @@ import os
 import time
 import json
 import copy
-# from networks.pointpillars8_trt import PointPillars
+from networks.pointpillars8_trt import PointPillars
 from framework.voxel_generator import VoxelGenerator, VoxelGenerator_trt
 from framework.anchor_assigner import AnchorAssigner
 from framework.loss_generator import LossGenerator
@@ -13,7 +13,7 @@ from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
 
-from networks.pointpillars8_shared import PointPillars
+# from networks.pointpillars8_shared import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -21,7 +21,7 @@ from eval.eval import get_official_eval_result
 
 
 def train():
-    with open('configs/eight_20cm.json', 'r') as f:
+    with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
     # cuda_id = config['device']
     device = torch.device("cuda:0")
@@ -275,18 +275,18 @@ def infer_trt():
         config = json.load(f)
     device = torch.device("cuda:0")
     config['device'] = device
-    voxel_generator = VoxelGenerator_trt(config)
+    voxel_generator = VoxelGenerator(config)
     anchor_assigner = AnchorAssigner(config)
     inference = Inference(config, anchor_assigner)
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
     net.to(device)
 
-    # model_path = Path(config['data_root']) / config['model_path'] / config['experiment']
-    # latest_model_path = model_path / '265000.pth'
-    # checkpoint = torch.load(latest_model_path)
-    # net.load_state_dict(checkpoint['model_state_dict'])
-    # print('model loaded')
+    model_path = Path(config['model_path']) / config['experiment']
+    latest_model_path = model_path / '265000.pth'
+    checkpoint = torch.load(latest_model_path)
+    net.load_state_dict(checkpoint['model_state_dict'])
+    print('model loaded')
 
     # net.half()
     net.eval()
@@ -314,7 +314,7 @@ def infer_trt():
             # input_names = ['voxels', 'num_points_per_voxel', 'coordinates', 'voxel_num']
             # torch.onnx.export(net, inputs, "pp.onnx", verbose=True, opset_version=11, input_names=input_names)
             # return 0
-            preds_dict = net.export(example["voxels"], example["num_points_per_voxel"], example["coordinates"], example["voxel_num"])
+            preds_dict = net(example)
             torch.cuda.synchronize()
         net_time = time.time()
         dt_annos += inference.infer_gpu(example, preds_dict)
@@ -412,9 +412,10 @@ class PointPillarsNode:
 
 
 if __name__ == "__main__":
-    train()
+    # train()
     # infer()
-    # infer_trt()
+
+    infer_trt()
     # PointPillarsNode().spin()
 
 '''
