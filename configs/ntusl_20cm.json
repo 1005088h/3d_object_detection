@@ -4,7 +4,7 @@
   "train_info": ["soonlee/train/data_info.pkl", "ntu/train/data_info.pkl"],
   "eval_info": ["soonlee/eval/data_info.pkl", "ntu/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
-  "experiment": "ntusl_pillar8_locweight",
+  "experiment": "ntusl_pillar8_batch",
   "device": 0,
   "num_workers": 0,
   "create_mask_gpu": 1,

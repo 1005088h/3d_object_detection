@@ -280,14 +280,15 @@ def infer_trt():
     inference = Inference(config, anchor_assigner)
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
-    net.to(device)
+
 
     model_path = Path(config['model_path']) / config['experiment']
-    latest_model_path = model_path / '265000.pth'
-    checkpoint = torch.load(latest_model_path)
+    latest_model_path = model_path / '155000.pth'
+
+    checkpoint = torch.load(latest_model_path, map_location=lambda storage, loc: storage)
     net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
-
+    net.to(device)
     # net.half()
     net.eval()
 
@@ -314,7 +315,7 @@ def infer_trt():
             # input_names = ['voxels', 'num_points_per_voxel', 'coordinates', 'voxel_num']
             # torch.onnx.export(net, inputs, "pp.onnx", verbose=True, opset_version=11, input_names=input_names)
             # return 0
-            preds_dict = net(example)
+            preds_dict = net.export(example)
             torch.cuda.synchronize()
         net_time = time.time()
         dt_annos += inference.infer_gpu(example, preds_dict)
@@ -329,6 +330,12 @@ def infer_trt():
     print("\naverage time : \t\t\t%.5f" % (time_elapse / len_infos))
     print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
     print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
+
+    print("voxel_features time : \t\t%.5f" % (net.voxel_features_time / len_infos))
+    print("spatial_features time : \t%.5f" % (net.spatial_features_time / len_infos))
+    print("rpn_feature time : \t\t\t%.5f" % (net.rpn_feature_time / len_infos))
+    print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
+
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
 
     dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
