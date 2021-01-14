@@ -315,7 +315,7 @@ def infer_trt():
             # input_names = ['voxels', 'num_points_per_voxel', 'coordinates', 'voxel_num']
             # torch.onnx.export(net, inputs, "pp.onnx", verbose=True, opset_version=11, input_names=input_names)
             # return 0
-            preds_dict = net.export(example)
+            preds_dict = net(example)
             torch.cuda.synchronize()
         net_time = time.time()
         dt_annos += inference.infer_gpu(example, preds_dict)

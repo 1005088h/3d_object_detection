@@ -381,12 +381,24 @@ class SharedHead(nn.Module):
         self.conv_box = nn.Conv2d(in_plane, self.num_anchor_per_loc * self.box_code_size, 1)
         self.conv_dir = nn.Conv2d(in_plane, self.num_anchor_per_loc * 2, 1)
 
-        head_input_shape = (1, 64, 800, 800)
-        self.rpn_context.set_binding_shape(0, head_input_shape)
-        size = trt.volume(rpn_input_shape) * np.dtype(np.float32).itemsize
-        self.d_input = cuda.mem_alloc(size)
-        self.rpn_out_h = cuda.pagelocked_empty(trt.volume(self.rpn_context.get_binding_shape(1)), dtype=np.float32)
-        self.rpn_out_d = cuda.mem_alloc(self.rpn_out_h.nbytes)
+        head_engine_path = '../deployment/head16.engine'
+        engine = load_engine_context(head_engine_path)
+        self.head_context = engine.create_execution_context()
+
+        # input_shape = engine.get_binding_shape('inputs')
+        cls_preds_shape = engine.get_binding_shape('cls_preds')
+        box_preds_shape = engine.get_binding_shape('box_preds')
+        dir_preds_shape = engine.get_binding_shape('dir_preds')
+        import tensorrt as trt
+
+        self.cls_preds_h_o = cuda.pagelocked_empty(trt.volume(cls_preds_shape), dtype=np.float32)
+        self.cls_preds_d_o = cuda.mem_alloc(self.cls_preds_h_o.nbytes)
+
+        self.box_preds_h_o = cuda.pagelocked_empty(trt.volume(box_preds_shape), dtype=np.float32)
+        self.box_preds_d_o = cuda.mem_alloc(self.box_preds_h_o.nbytes)
+
+        self.dir_preds_h_o = cuda.pagelocked_empty(trt.volume(dir_preds_shape), dtype=np.float32)
+        self.dir_preds_d_o = cuda.mem_alloc(self.dir_preds_h_o.nbytes)
 
     def forward(self, x):
         N = x.shape[0]
@@ -411,13 +423,13 @@ class SharedHead(nn.Module):
         return cls_preds, box_preds, dir_preds
 
 
-def export(model, input, onnx_file_path, dynamic=False):
+def export(model, input, onnx_file_path, dynamic=False, input_names=['input'], output_names=['output']):
     import onnx
     if dynamic:
         torch.onnx.export(model, input, onnx_file_path, verbose=False, input_names=['input'], output_names=['output'],
                           dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
     else:
-        torch.onnx.export(model, input, onnx_file_path, verbose=False, opset_version=11)
+        torch.onnx.export(model, input, onnx_file_path, verbose=False, opset_version=11, input_names=input_names, output_names=output_names)
 
     onnx_model = onnx.load(onnx_file_path)
     onnx.checker.check_model(onnx_model)
@@ -453,8 +465,7 @@ def load_engine_context(trt_engine_path):
     TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
     with open(trt_engine_path, 'rb') as f, trt.Runtime(TRT_LOGGER) as runtime:
         engine = runtime.deserialize_cuda_engine(f.read())
-    return engine.create_execution_context()
-
+    return engine
 
 class PointPillars(nn.Module):
 
@@ -486,7 +497,8 @@ class PointPillars(nn.Module):
 
         import tensorrt as trt
         pfn_engine_path = '../deployment/pfn16.engine'
-        self.pfn_context = load_engine_context(pfn_engine_path)
+        engine = load_engine_context(pfn_engine_path)
+        self.pfn_context = engine.create_execution_context()
 
         # dynamic shape, batch size
         self.pfn_context.active_optimization_profile = 0
@@ -499,7 +511,8 @@ class PointPillars(nn.Module):
         self.pfn_o_d = cuda.mem_alloc(self.pfn_o_h.nbytes)
 
         rpn_engine_path = '../deployment/rpn16.engine'
-        self.rpn_context = load_engine_context(rpn_engine_path)
+        engine = load_engine_context(rpn_engine_path)
+        self.rpn_context = engine.create_execution_context()
 
         rpn_input_shape = (1, 64, 800, 800)
         self.rpn_context.set_binding_shape(0, rpn_input_shape)
@@ -596,7 +609,7 @@ class PointPillars(nn.Module):
         self.rpn_context.execute_async_v2(bindings=[int(spatial_features_cuda_d), int(self.rpn_out_d)],
                                           stream_handle=stream.handle)
         stream.synchronize()
-        rpn_feature_time = time.time()
+
         cuda.memcpy_dtoh_async(self.rpn_out_h, self.rpn_out_d, stream)
         rpn_feature_h = self.rpn_out_h.reshape(self.rpn_context.get_binding_shape(1))
         rpn_feature = torch.from_numpy(rpn_feature_h).to(self.device)
@@ -607,7 +620,21 @@ class PointPillars(nn.Module):
 
         torch.cuda.synchronize()
 
-        cls_preds, box_preds, dir_preds = self.heads(rpn_feature)
+        # cls_preds, box_preds, dir_preds = self.heads(rpn_feature)
+        rpn_feature_time = time.time()
+
+        self.heads.head_context.execute_async_v2(bindings=[int(self.rpn_out_d), int(self.heads.cls_preds_d_o), int(self.heads.box_preds_d_o), int(self.heads.dir_preds_d_o)],
+                                          stream_handle=stream.handle)
+        stream.synchronize()
+        heads_time = time.time()
+        cuda.memcpy_dtoh_async(self.heads.cls_preds_h_o, self.heads.cls_preds_d_o, stream)
+        cuda.memcpy_dtoh_async(self.heads.box_preds_h_o, self.heads.box_preds_d_o, stream)
+        cuda.memcpy_dtoh_async(self.heads.dir_preds_h_o, self.heads.dir_preds_d_o, stream)
+        stream.synchronize()
+
+        cls_preds = torch.from_numpy(self.heads.cls_preds_h_o).to(self.device).view(1, -1, 1)
+        box_preds = torch.from_numpy(self.heads.box_preds_h_o).to(self.device).view(1, -1, 7)
+        dir_preds = torch.from_numpy(self.heads.dir_preds_h_o).to(self.device).view(1, -1, 2)
 
         preds_dict = {
             "cls_preds": cls_preds,
@@ -615,7 +642,7 @@ class PointPillars(nn.Module):
             "dir_preds": dir_preds
         }
         torch.cuda.synchronize()
-        heads_time = time.time()
+
 
         self.voxel_features_time += voxel_features_time - start
         self.spatial_features_time += spatial_features_time - voxel_features_time
@@ -695,7 +722,7 @@ class PointPillars(nn.Module):
         head_onnx_file_path = '../deployment/head.onnx'
         head_engine_path = '../deployment/head16.engine'
 
-        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False)
+        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False, input_names=['inputs'], output_names=['cls_preds', 'box_preds', 'dir_preds'])
         build_engine(head_onnx_file_path, head_engine_path, dynamic=False)
         exit(0)
 
