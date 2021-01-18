@@ -4,6 +4,7 @@ from torch.nn import Sequential
 import functools
 import time
 from framework.utils import change_default_args
+from framework.trt_utils import export_onnx, build_engine, load_engine
 import numpy as np
 import pycuda.driver as cuda
 import pycuda.autoinit
@@ -12,7 +13,7 @@ from pycuda.compiler import SourceModule
 pycuda.driver.Device(0).retain_primary_context()
 
 
-### change anchor order, shared head
+### change anchor order, shared head, add trt
 
 class PointNet(nn.Module):
     def __init__(self):
@@ -36,6 +37,29 @@ class PointNet(nn.Module):
         x_max = torch.max(x, dim=0, keepdim=True)[0]
         x_max = x_max.squeeze(dim=0)
         return x_max
+
+
+class PFN_trt:
+    def __init__(self, engine_path):
+        super().__init__()
+        import tensorrt as trt
+        engine = load_engine(engine_path)
+        self.context = engine.create_execution_context()
+
+        # dynamic shape, batch size
+        self.context.active_optimization_profile = 0
+
+        input_shape = (16000, 15, 9)
+        self.context.set_binding_shape(0, input_shape)
+        size = trt.volume(input_shape) * np.dtype(np.float32).itemsize
+        self.in_d = cuda.mem_alloc(size)
+        self.out_h = cuda.pagelocked_empty(trt.volume(self.context.get_binding_shape(1)), dtype=np.float32)
+        self.out_d = cuda.mem_alloc(self.out_h.nbytes)
+
+    def run(self, voxels_shape):
+        self.context.set_binding_shape(0, voxels_shape)
+        self.context.execute_v2(bindings=[int(self.out_d), int(self.in_d)])
+        return self.out_d
 
 
 class PointPillarsScatter(nn.Module):
@@ -89,40 +113,8 @@ class PointPillarsScatter(nn.Module):
         return batch_canvas
 
 
-class PointPillarsScatter_v2(nn.Module):
-    def __init__(self,
-                 batch_size,
-                 output_shape,
-                 num_input_features=64):
-        super().__init__()
-        self.name = 'PointPillarsScatter'
-        self.output_shape = output_shape
-        self.nx = output_shape[0]
-        self.ny = output_shape[1]
-        self.num_channels = num_input_features
-        self.batch_size = batch_size
-
-    def forward(self, voxel_features, coords):
-        # Create the canvas for this sample
-        canvas = torch.zeros(self.num_channels, self.nx * self.ny, dtype=voxel_features.dtype,
-                             device=voxel_features.device)
-
-        indices = coords[:, 0] * self.ny + coords[:, 1]
-        indices = indices.type(torch.long)
-        # voxels = voxel_features
-        # voxels = voxels.t()
-
-        # Now scatter the blob back to the canvas.
-        canvas[:, indices] = voxel_features
-
-        # Undo the column stacking to final 4-dim tensor
-        canvas = canvas.view(self.batch_size, self.num_channels, self.nx, self.ny)
-
-        return canvas
-
-
-class Scatter:
-    def __init__(self, output_shape, num_input_features=64):
+class Scatter_cuda:
+    def __init__(self, output_shape, num_input_features=64, max_num_pillars=16000):
         super().__init__()
 
         nx = output_shape[0]
@@ -132,13 +124,28 @@ class Scatter:
         self.canvas_size = canvas_np.size
         self.canvas_h = cuda.pagelocked_empty(canvas_np.size, dtype=np.float32)
         self.canvas_d = cuda.mem_alloc(self.canvas_h.nbytes)
-        cuda.memset_d32(self.canvas_d, 0, canvas_np.size)
+        cuda.memset_d32(self.canvas_d, 0, self.canvas_size)
 
         stride_ca_h = np.zeros([2]).astype(np.int32)
         stride_ca_h[1] = canvas_np.shape[2]
         stride_ca_h[0] = canvas_np.shape[1] * stride_ca_h[1]
         self.stride_ca_d = cuda.mem_alloc(stride_ca_h.nbytes)
         cuda.memcpy_htod(self.stride_ca_d, stride_ca_h)
+
+        # coors_h = coors.cpu().numpy()
+        # coors_d = cuda.mem_alloc(coors_h.nbytes)
+        # cuda.memcpy_htod(coors_d, coors_h)
+        #
+        # stride_vx_h = np.array(features.shape[0])
+        # stride_vx_d = cuda.mem_alloc(stride_vx_h.nbytes)
+        # cuda.memcpy_htod(stride_vx_d, stride_vx_h)
+
+        coors_np = np.zeros([max_num_pillars, 3]).astype(np.int32)
+        self.coors_d = cuda.mem_alloc(coors_np.nbytes)
+        cuda.memset_d32(self.coors_d, 0, coors_np.size)
+
+        stride_vx_h = np.zeros([1]).astype(np.int32)
+        self.stride_vx_d = cuda.mem_alloc(stride_vx_h.nbytes)
 
         self.grid = (4, 250, 1)
         self.block = (16, 64, 1)
@@ -164,13 +171,35 @@ class Scatter:
 
         self.scatter = mod.get_function("scatter")
 
-    def reset(self):
+    def run(self, voxel_d):
         cuda.memset_d32(self.canvas_d, 0, self.canvas_size)
-
-    def run(self, voxel_d, coors_d, stride_vx_d):
-        self.scatter(self.canvas_d, self.stride_ca_d, voxel_d, stride_vx_d, coors_d, grid=self.grid, block=self.block)
-
+        self.scatter(self.canvas_d, self.stride_ca_d, voxel_d, self.stride_vx_d, self.coors_d, grid=self.grid, block=self.block)
         return self.canvas_d
+
+    def toHost(self, canvas_d):
+        cuda.memcpy_dtoh(self.canvas_h, canvas_d)
+        return self.canvas_h
+
+
+class RPN_trt:
+    def __init__(self, engine_path):
+        super().__init__()
+        import tensorrt as trt
+        engine = load_engine(engine_path)
+        self.context = engine.create_execution_context()
+
+        # rpn_input_shape = (1, 64, 800, 800)
+        # self.rpn_context.set_binding_shape(0, rpn_input_shape)
+
+        self.out_h = cuda.pagelocked_empty(trt.volume(self.context.get_binding_shape(1)), dtype=np.float32)
+        self.out_d = cuda.mem_alloc(self.out_h.nbytes)
+
+        self.rpn_context = engine.create_execution_context()
+
+
+    def run(self, canvas_d):
+        self.pfn_context.execute_v2(bindings=[int(self.out_d), int(canvas_d)])
+        return self.out_d
 
 
 class RPN(nn.Module):
@@ -242,125 +271,39 @@ class RPN(nn.Module):
         return x
 
 
-class SingleHead(nn.Module):
+class SharedHead_trt:
 
-    def __init__(self, in_plane):
+    def __init__(self, engine_path):
         super().__init__()
-        self.box_code_size = 7
 
-        num_ped_size = 1
-        num_ped_rot = 1
-        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
-        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
-        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
-        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
+        engine = load_engine(engine_path)
+        self.context = engine.create_execution_context()
 
-    def forward(self, x):
-        batch_size = x.shape[0]
+        cls_preds_shape = engine.get_binding_shape('cls_preds')
+        box_preds_shape = engine.get_binding_shape('box_preds')
+        dir_preds_shape = engine.get_binding_shape('dir_preds')
+        import tensorrt as trt
 
-        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
+        self.cls_preds_h = cuda.pagelocked_empty(trt.volume(cls_preds_shape), dtype=np.float32)
+        self.cls_preds_d = cuda.mem_alloc(self.cls_preds_h.nbytes)
 
-        cls_preds = ped_cls_preds
-        box_preds = ped_box_preds
-        dir_cls_preds = ped_dir_preds
+        self.box_preds_h = cuda.pagelocked_empty(trt.volume(box_preds_shape), dtype=np.float32)
+        self.box_preds_d = cuda.mem_alloc(self.box_preds_h.nbytes)
 
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_cls_preds": dir_cls_preds
-        }
+        self.dir_preds_h = cuda.pagelocked_empty(trt.volume(dir_preds_shape), dtype=np.float32)
+        self.dir_preds_d = cuda.mem_alloc(self.dir_preds_h.nbytes)
 
-        return pred_dict
-
-
-class MultiHead(nn.Module):
-
-    def __init__(self, in_plane):
-        super().__init__()
-        self.box_code_size = 7
-
-        num_veh_size = 3
-        num_veh_rot = 2
-        num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-        self.conv_veh_cls = nn.Conv2d(in_plane, num_veh_anchor_per_loc, 1)
-        self.conv_veh_box = nn.Conv2d(in_plane, num_veh_anchor_per_loc * self.box_code_size, 1)
-        self.conv_veh_dir = nn.Conv2d(in_plane, num_veh_anchor_per_loc * 2, 1)
-
-    def forward(self, x):
-        batch_size = x.shape[0]
-        cls_preds = self.conv_veh_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_preds": dir_preds
-        }
-
-        return pred_dict
-
-
-class MultiHeads(nn.Module):
-
-    def __init__(self, in_plane):
-        super().__init__()
-        self.box_code_size = 7
-
-        num_veh_size = 3
-        num_veh_rot = 2
-        num_veh_anchor_per_loc = num_veh_size * num_veh_rot
-        self.conv_veh_cls = nn.Conv2d(in_plane, num_veh_anchor_per_loc, 1)
-        self.conv_veh_box = nn.Conv2d(in_plane, num_veh_anchor_per_loc * self.box_code_size, 1)
-        self.conv_veh_dir = nn.Conv2d(in_plane, num_veh_anchor_per_loc * 2, 1)
-
-        num_ped_size = 1
-        num_ped_rot = 1
-        num_ped_anchor_per_loc = num_ped_size * num_ped_rot
-        self.conv_ped_cls = nn.Conv2d(in_plane, num_ped_anchor_per_loc, 1)
-        self.conv_ped_box = nn.Conv2d(in_plane, num_ped_anchor_per_loc * self.box_code_size, 1)
-        self.conv_ped_dir = nn.Conv2d(in_plane, num_ped_anchor_per_loc * 2, 1)
-
-        num_cyc_size = 1
-        num_cyc_rot = 2
-        num_cyc_anchor_per_loc = num_cyc_size * num_cyc_rot
-        self.conv_cyc_cls = nn.Conv2d(in_plane, num_cyc_anchor_per_loc, 1)
-        self.conv_cyc_box = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * self.box_code_size, 1)
-        self.conv_cyc_dir = nn.Conv2d(in_plane, num_cyc_anchor_per_loc * 2, 1)
-
-    def forward(self, x):
-        batch_size = x.shape[0]
-        veh_cls_preds = self.conv_veh_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        veh_box_preds = self.conv_veh_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        veh_dir_preds = self.conv_veh_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-
-        ped_cls_preds = self.conv_ped_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        ped_box_preds = self.conv_ped_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        ped_dir_preds = self.conv_ped_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-
-        cyc_cls_preds = self.conv_cyc_cls(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 1)
-        cyc_box_preds = self.conv_cyc_box(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, self.box_code_size)
-        cyc_dir_preds = self.conv_cyc_dir(x).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-
-        cls_preds = torch.cat((veh_cls_preds, ped_cls_preds, cyc_cls_preds), dim=1)
-        box_preds = torch.cat((veh_box_preds, ped_box_preds, cyc_box_preds), dim=1)
-        dir_preds = torch.cat((veh_dir_preds, ped_dir_preds, cyc_dir_preds), dim=1)
-
-        pred_dict = {
-            "cls_preds": cls_preds,
-            "box_preds": box_preds,
-            "dir_preds": dir_preds
-        }
-
-        return pred_dict
+    def run(self, rpn_out_d):
+        self.heads.context.execute(
+            bindings=[int(rpn_out_d), int(self.cls_preds_d_o), int(self.box_preds_d_o), int(self.dir_preds_d_o)])
+        return self.cls_preds_d_o, self.box_preds_d_o, self.dir_preds_d_o
 
 
 class SharedHead(nn.Module):
 
-    def __init__(self, in_plane):
+    def __init__(self, in_plane, engine_path=None):
         super().__init__()
+
         self.box_code_size = 7
 
         num_veh_size = 3
@@ -381,25 +324,6 @@ class SharedHead(nn.Module):
         self.conv_box = nn.Conv2d(in_plane, self.num_anchor_per_loc * self.box_code_size, 1)
         self.conv_dir = nn.Conv2d(in_plane, self.num_anchor_per_loc * 2, 1)
 
-        head_engine_path = '../deployment/head16.engine'
-        engine = load_engine_context(head_engine_path)
-        self.head_context = engine.create_execution_context()
-
-        # input_shape = engine.get_binding_shape('inputs')
-        cls_preds_shape = engine.get_binding_shape('cls_preds')
-        box_preds_shape = engine.get_binding_shape('box_preds')
-        dir_preds_shape = engine.get_binding_shape('dir_preds')
-        import tensorrt as trt
-
-        self.cls_preds_h_o = cuda.pagelocked_empty(trt.volume(cls_preds_shape), dtype=np.float32)
-        self.cls_preds_d_o = cuda.mem_alloc(self.cls_preds_h_o.nbytes)
-
-        self.box_preds_h_o = cuda.pagelocked_empty(trt.volume(box_preds_shape), dtype=np.float32)
-        self.box_preds_d_o = cuda.mem_alloc(self.box_preds_h_o.nbytes)
-
-        self.dir_preds_h_o = cuda.pagelocked_empty(trt.volume(dir_preds_shape), dtype=np.float32)
-        self.dir_preds_d_o = cuda.mem_alloc(self.dir_preds_h_o.nbytes)
-
     def forward(self, x):
         N = x.shape[0]
 
@@ -414,80 +338,15 @@ class SharedHead(nn.Module):
         N, C, H, W = dir_preds.shape
         dir_preds = dir_preds.view(N, self.num_anchor_per_loc, 2, H, W).permute(0, 1, 3, 4, 2).contiguous().view(N, -1,
                                                                                                                  2)
-        # pred_dict = {
-        #     "cls_preds": cls_preds,
-        #     "box_preds": box_preds,
-        #     "dir_preds": dir_preds
-        # }
 
         return cls_preds, box_preds, dir_preds
 
-
-def export(model, input, onnx_file_path, dynamic=False, input_names=['input'], output_names=['output']):
-    import onnx
-    if dynamic:
-        torch.onnx.export(model, input, onnx_file_path, verbose=False, input_names=['input'], output_names=['output'],
-                          dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
-    else:
-        torch.onnx.export(model, input, onnx_file_path, verbose=False, opset_version=11, input_names=input_names, output_names=output_names)
-
-    onnx_model = onnx.load(onnx_file_path)
-    onnx.checker.check_model(onnx_model)
-    onnx.helper.printable_graph(onnx_model.graph)
-
-
-def build_engine(onnx_file_path, trt_engine_path, dynamic=False):
-    import tensorrt as trt
-    TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-    EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-    with trt.Builder(TRT_LOGGER) as builder, builder.create_network(EXPLICIT_BATCH) as network, trt.OnnxParser(network,
-                                                                                                               TRT_LOGGER) as parser:
-        builder.max_batch_size = 1  # always 1 for explicit batch
-        with open(onnx_file_path, 'rb') as model:
-            parser.parse(model.read())
-
-        config = builder.create_builder_config()
-        config.max_workspace_size = 1 << 30
-        config.flags = 1 << (int)(trt.BuilderFlag.FP16)
-        if dynamic:
-            profile = builder.create_optimization_profile()
-            profile.set_shape("input", (1, 15, 9), (16000, 15, 9), (16000, 15, 9))
-            config.add_optimization_profile(profile)
-        print(network.num_layers)
-        engine = builder.build_engine(network, config)
-        with open(trt_engine_path, 'wb') as f:
-            f.write(engine.serialize())
-        return engine
-
-
-def load_engine_context(trt_engine_path):
-    import tensorrt as trt
-    TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-    with open(trt_engine_path, 'rb') as f, trt.Runtime(TRT_LOGGER) as runtime:
-        engine = runtime.deserialize_cuda_engine(f.read())
-    return engine
 
 class PointPillars(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         self.device = config['device']
-        self.pillar_point_net = PointNet()
-        num_rpn_input_filters = self.pillar_point_net.out_channels
-        self.middle_feature_extractor = PointPillarsScatter_v2(batch_size=config['batch_size'],
-                                                               output_shape=config['grid_size'],
-                                                               num_input_features=num_rpn_input_filters)
-
-        self.middle_feature_extractor_cuda = Scatter(output_shape=config['grid_size'],
-                                                     num_input_features=num_rpn_input_filters)
-
-        self.rpn = RPN(num_rpn_input_filters)
-        self.heads = SharedHead(self.rpn.out_plane)
-        self.voxel_features_time = 0.0
-        self.spatial_features_time = 0.0
-        self.rpn_feature_time = 0.0
-        self.heads_time = 0.0
-
         voxel_size = config['voxel_size']
         offset = config['detection_offset']
         self.vx = voxel_size[0]
@@ -495,9 +354,202 @@ class PointPillars(nn.Module):
         self.x_offset = self.vx / 2 + offset[0]
         self.y_offset = self.vy / 2 + offset[1]
 
+        self.pfn_time, self.scatter_time, self.rpn_time, self.heads_time = 0, 0, 0, 0
+
+        pfn_engine_path = '../deployment/pfn16.engine'
+        self.pfn = PFN_trt(pfn_engine_path)
+
+        self.scatter = Scatter_cuda(output_shape=config['grid_size'], num_input_features=64)
+
+        rpn_engine_path = '../deployment/rpn16.engine'
+        self.rpn = RPN_trt(rpn_engine_path)
+
+        head_engine_path = '../deployment/head16.engine'
+        self.heads = SharedHead_trt(head_engine_path)
+
+    def forward(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        start = time.time()
+        pfn_in_h = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        self.pfn.context.set_binding_shape(0, pfn_in_h.shape)
+        cuda.memcpy_htod(self.pfn.in_d, pfn_in_h)
+        self.pfn.context.execute_v2(bindings=[int(features.data_ptr()), int(self.pfn.out_d)])
+        pfn_time = time.time()
+
+        coors_h = coors.cpu().numpy().astype(np.int32)
+        cuda.memcpy_htod(self.scatter.coors_d, coors_h)
+        stride_vx_h = np.array(features.shape[0]).astype(np.int32)
+        cuda.memcpy_htod(self.scatter.stride_vx_d, stride_vx_h)
+        voxel_feature_d = self.scatter.run(self.pfn.out_d)
+        scatter_time = time.time()
+
+        self.rpn.context.execute(bindings=[int(voxel_feature_d), int(self.rpn.out_d)])
+        rpn_time = time.time()
+
+        self.heads.context.execute(
+            bindings=[int(self.rpn.out_d), int(self.heads.cls_preds_d), int(self.heads.box_preds_d),
+                      int(self.heads.dir_preds_d)])
+        heads_time = time.time()
+
+        cuda.memcpy_dtoh(self.heads.cls_preds_h, self.heads.cls_preds_d)
+        cuda.memcpy_dtoh(self.heads.box_preds_h, self.heads.box_preds_d)
+        cuda.memcpy_dtoh(self.heads.dir_preds_h, self.heads.dir_preds_d)
+
+        cls_preds = torch.from_numpy(self.heads.cls_preds_h).to(self.device).view(1, -1, 1)
+        box_preds = torch.from_numpy(self.heads.box_preds_h).to(self.device).view(1, -1, 7)
+        dir_preds = torch.from_numpy(self.heads.dir_preds_h).to(self.device).view(1, -1, 2)
+
+        preds_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        self.pfn_time += pfn_time - start
+        self.scatter_time += scatter_time - pfn_time
+        self.rpn_time += rpn_time - scatter_time
+        self.heads_time += heads_time - rpn_time
+
+        return preds_dict
+
+    def export(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        # Find distance of x, y, and z from cluster center
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        # Find distance of x and y from pillar center
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        # Combine together feature decorations
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
+        # empty pillars remain set to zeros.
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        voxel_features = self.pillar_point_net(features)
+        voxel_features = voxel_features.squeeze()
+        pfn_onnx_file_path = '../deployment/pfn.onnx'
+        pfn_engine_path = '../deployment/pfn16.engine'
+        # export(self.pillar_point_net, features, pfn_onnx_file_path, dynamic=True)
+        # build_engine(pfn_onnx_file_path, pfn_engine_path, dynamic=True)
+        # exit(0)
+
+        # pfn_context = load_engine_context(pfn_engine_path)
+        # h_input = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        # h_output = self.pfn_infer(pfn_context, h_input)
+        # voxel_features = torch.Tensor(h_output).view(features.shape[0], -1)
+        # voxel_features_np = voxel_features.cpu().numpy()
+
+        spatial_features = self.middle_feature_extractor(voxel_features, coors)
+        rpn_onnx_file_path = '../deployment/rpn_inst2.onnx'
+        rpn_engine_path = '../deployment/rpn_inst2.engine'
+
+        rpn_feature = self.rpn(spatial_features)
+        export(self.rpn, spatial_features, rpn_onnx_file_path, dynamic=False)
+        build_engine(rpn_onnx_file_path, rpn_engine_path, dynamic=False)
+        exit(0)
+
+        # preds_dict = self.heads(rpn_feature)
+
+        cls_preds, box_preds, dir_preds = self.heads(rpn_feature)
+
+        head_onnx_file_path = '../deployment/head.onnx'
+        head_engine_path = '../deployment/head16.engine'
+
+        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False, input_names=['inputs'],
+               output_names=['cls_preds', 'box_preds', 'dir_preds'])
+        build_engine(head_onnx_file_path, head_engine_path, dynamic=False)
+        exit(0)
+
+        preds_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        # self.voxel_features_time += voxel_features_time - start
+        # self.spatial_features_time += spatial_features_time - voxel_features_time
+        # self.rpn_feature_time += rpn_feature_time - spatial_features_time
+        # self.heads_time += heads_time - rpn_feature_time
+
+        return preds_dict
+
+
+class PointPillars_v1(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.device = config['device']
+        # self.pillar_point_net = PointNet()
+        # num_rpn_input_filters = self.pillar_point_net.out_channels
+        # self.middle_feature_extractor = PointPillarsScatter_v2(batch_size=config['batch_size'],
+        #                                                        output_shape=config['grid_size'],
+        #                                                        num_input_features=num_rpn_input_filters)
+        #
+        #
+        # self.rpn = RPN(num_rpn_input_filters)
+        # self.heads = SharedHead_trt(320)
+        # self.pfn_time, self.rpn_time, self.scatter_time, self.heads_time = 0.0, 0.0, 0.0, 0.0
+        #
+        voxel_size = config['voxel_size']
+        offset = config['detection_offset']
+        self.vx = voxel_size[0]
+        self.vy = voxel_size[1]
+        self.x_offset = self.vx / 2 + offset[0]
+        self.y_offset = self.vy / 2 + offset[1]
+
+        # pfn_engine_path = '../deployment/pfn16.engine'
+        # self.pfn = PFN_trt(pfn_engine_path)
+        #
+        self.scatter = Scatter_cuda(output_shape=config['grid_size'], num_input_features=64)
+        #
+        # rpn_engine_path = '../deployment/rpn16.engine'
+        # self.rpn = RPN_trt(rpn_engine_path)
+        #
+        head_engine_path = '../deployment/head16.engine'
+        self.heads = SharedHead_trt(head_engine_path)
+
         import tensorrt as trt
         pfn_engine_path = '../deployment/pfn16.engine'
-        engine = load_engine_context(pfn_engine_path)
+        engine = load_engine(pfn_engine_path)
         self.pfn_context = engine.create_execution_context()
 
         # dynamic shape, batch size
@@ -511,15 +563,251 @@ class PointPillars(nn.Module):
         self.pfn_o_d = cuda.mem_alloc(self.pfn_o_h.nbytes)
 
         rpn_engine_path = '../deployment/rpn16.engine'
-        engine = load_engine_context(rpn_engine_path)
+        engine = load_engine(rpn_engine_path)
         self.rpn_context = engine.create_execution_context()
 
         rpn_input_shape = (1, 64, 800, 800)
         self.rpn_context.set_binding_shape(0, rpn_input_shape)
-        size = trt.volume(rpn_input_shape) * np.dtype(np.float32).itemsize
+        # size = trt.volume(rpn_input_shape) * np.dtype(np.float32).itemsize
         # self.d_input = cuda.mem_alloc(size)
         self.rpn_out_h = cuda.pagelocked_empty(trt.volume(self.rpn_context.get_binding_shape(1)), dtype=np.float32)
         self.rpn_out_d = cuda.mem_alloc(self.rpn_out_h.nbytes)
+
+    def forward(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        h_input = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        self.pfn_context.set_binding_shape(0, h_input.shape)
+
+        cuda.memcpy_htod(self.pfn_i_d, h_input)
+
+        coors_h = coors.cpu().numpy()
+        coors_d = cuda.mem_alloc(coors_h.nbytes)
+        cuda.memcpy_htod(coors_d, coors_h)
+
+        stride_vx_h = np.array(features.shape[0])
+        stride_vx_d = cuda.mem_alloc(stride_vx_h.nbytes)
+        cuda.memcpy_htod(stride_vx_d, stride_vx_h)
+        start = time.time()
+        self.pfn_context.execute_v2(bindings=[int(self.pfn_i_d), int(self.pfn_o_d)])
+        pfn_time = time.time()
+        self.scatter.clear()
+        spatial_features_cuda_d = self.scatter.run(self.pfn_o_d, coors_d, stride_vx_d)
+        scatter_time = time.time()
+
+        self.rpn_context.execute(bindings=[int(spatial_features_cuda_d), int(self.rpn_out_d)])
+        rpn_time = time.time()
+        self.heads.context.execute(
+            bindings=[int(self.rpn_out_d), int(self.heads.cls_preds_d), int(self.heads.box_preds_d),
+                      int(self.heads.dir_preds_d)])
+        heads_time = time.time()
+
+        cuda.memcpy_dtoh(self.heads.cls_preds_h, self.heads.cls_preds_d)
+        cuda.memcpy_dtoh(self.heads.box_preds_h, self.heads.box_preds_d)
+        cuda.memcpy_dtoh(self.heads.dir_preds_h, self.heads.dir_preds_d)
+
+        cls_preds = torch.from_numpy(self.heads.cls_preds_h).to(self.device).view(1, -1, 1)
+        box_preds = torch.from_numpy(self.heads.box_preds_h).to(self.device).view(1, -1, 7)
+        dir_preds = torch.from_numpy(self.heads.dir_preds_h).to(self.device).view(1, -1, 2)
+
+        preds_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        # self.pfn_time += pfn_time - start
+        # self.scatter_time += scatter_time - pfn_time
+        # self.rpn_time += rpn_time - scatter_time
+        # self.heads_time += heads_time - rpn_time
+
+        return preds_dict
+
+    def export(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        # Find distance of x, y, and z from cluster center
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        # Find distance of x and y from pillar center
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        # Combine together feature decorations
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        # The feature decorations were calculated without regard to whether pillar was empty. Need to ensure that
+        # empty pillars remain set to zeros.
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        # mask = get_paddings_indicator(num_point_per_voxel, voxel_count, axis=0)
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        voxel_features = self.pillar_point_net(features)
+        voxel_features = voxel_features.squeeze()
+        pfn_onnx_file_path = '../deployment/pfn.onnx'
+        pfn_engine_path = '../deployment/pfn16.engine'
+        # export(self.pillar_point_net, features, pfn_onnx_file_path, dynamic=True)
+        # build_engine(pfn_onnx_file_path, pfn_engine_path, dynamic=True)
+        # exit(0)
+
+        # pfn_context = load_engine_context(pfn_engine_path)
+        # h_input = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        # h_output = self.pfn_infer(pfn_context, h_input)
+        # voxel_features = torch.Tensor(h_output).view(features.shape[0], -1)
+        # voxel_features_np = voxel_features.cpu().numpy()
+
+        spatial_features = self.middle_feature_extractor(voxel_features, coors)
+        rpn_onnx_file_path = '../deployment/rpn_inst2.onnx'
+        rpn_engine_path = '../deployment/rpn_inst2.engine'
+
+        rpn_feature = self.rpn(spatial_features)
+        export(self.rpn, spatial_features, rpn_onnx_file_path, dynamic=False)
+        build_engine(rpn_onnx_file_path, rpn_engine_path, dynamic=False)
+        exit(0)
+
+        # preds_dict = self.heads(rpn_feature)
+
+        cls_preds, box_preds, dir_preds = self.heads(rpn_feature)
+
+        head_onnx_file_path = '../deployment/head.onnx'
+        head_engine_path = '../deployment/head16.engine'
+
+        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False, input_names=['inputs'],
+               output_names=['cls_preds', 'box_preds', 'dir_preds'])
+        build_engine(head_onnx_file_path, head_engine_path, dynamic=False)
+        exit(0)
+
+        preds_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        # self.voxel_features_time += voxel_features_time - start
+        # self.spatial_features_time += spatial_features_time - voxel_features_time
+        # self.rpn_feature_time += rpn_feature_time - spatial_features_time
+        # self.heads_time += heads_time - rpn_feature_time
+
+        return preds_dict
+
+
+class PointPillars_v0(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+
+        voxel_size = config['voxel_size']
+        offset = config['detection_offset']
+        self.vx = voxel_size[0]
+        self.vy = voxel_size[1]
+        self.x_offset = self.vx / 2 + offset[0]
+        self.y_offset = self.vy / 2 + offset[1]
+
+        pfn_engine_path = '../deployment/pfn16.engine'
+        self.pfn = PFN_trt(pfn_engine_path)
+
+        self.scatter = Scatter_cuda(output_shape=config['grid_size'], num_input_features=64)
+
+        rpn_engine_path = '../deployment/rpn16.engine'
+        self.rpn = RPN_trt(rpn_engine_path)
+
+        head_engine_path = '../deployment/head16.engine'
+        self.heads = SharedHead_trt(head_engine_path)
+
+    def forward_new(self, example):
+        voxels = example["voxels"]
+        num_point_per_voxel = example["num_points_per_voxel"]
+        coors = example["coordinates"]
+
+        points_mean = voxels[:, :, :3].sum(dim=1, keepdim=True) / num_point_per_voxel.type_as(voxels).view(-1, 1, 1)
+        f_cluster = voxels[:, :, :3] - points_mean
+
+        f_center = torch.zeros_like(voxels[:, :, :2])
+        f_center[:, :, 0] = voxels[:, :, 0] - (coors[:, 0].float().unsqueeze(1) * self.vx + self.x_offset)
+        f_center[:, :, 1] = voxels[:, :, 1] - (coors[:, 1].float().unsqueeze(1) * self.vy + self.y_offset)
+
+        features_ls = [voxels, f_cluster, f_center]
+
+        features = torch.cat(features_ls, dim=-1)
+
+        num_point_per_voxel = torch.unsqueeze(num_point_per_voxel, -1)
+        max_point_per_voxel = features.shape[1]
+        max_point_per_voxel = torch.arange(max_point_per_voxel, dtype=torch.int,
+                                           device=num_point_per_voxel.device).view(1, -1)
+        mask = num_point_per_voxel.int() > max_point_per_voxel
+        mask = torch.unsqueeze(mask, -1).type_as(features)
+        features *= mask
+
+        pillars_h = np.array(features.cpu().numpy(), dtype=np.float32, order='C')
+        cuda.memcpy_htod(self.pfn.in_d, pillars_h)
+        voxels_d = self.pfn.run(pillars_h.shape)
+
+        coors_h = coors.cpu().numpy()
+        coors_d = cuda.mem_alloc(coors_h.nbytes)
+        cuda.memcpy_htod(coors_d, coors_h)
+
+        stride_vx_h = np.array(features.shape[0])
+        stride_vx_d = cuda.mem_alloc(stride_vx_h.nbytes)
+
+        cuda.memcpy_htod(stride_vx_d, stride_vx_h)
+        self.scatter.clear()
+        spatial_features_cuda_d = self.scatter.run(voxels_d, coors_d, stride_vx_d)
+
+        rpn_out_d = self.rpn.run(canvas_d)
+        cls_preds_d, box_preds_d, dir_preds_d = self.heads.run(rpn_out_d)
+
+        cuda.memcpy_dtoh(self.heads.cls_preds_h, cls_preds_d)
+        cuda.memcpy_dtoh(self.heads.box_preds_h, box_preds_d)
+        cuda.memcpy_dtoh(self.heads.dir_preds_h, dir_preds_d)
+
+        cls_preds = torch.from_numpy(self.heads.cls_preds_h).to(self.device).view(1, -1, 1)
+        box_preds = torch.from_numpy(self.heads.box_preds_h).to(self.device).view(1, -1, 7)
+        dir_preds = torch.from_numpy(self.heads.dir_preds_h).to(self.device).view(1, -1, 2)
+
+        preds_dict = {
+            "cls_preds": cls_preds,
+            "box_preds": box_preds,
+            "dir_preds": dir_preds
+        }
+
+        self.pfn_time += pfn_time - start
+        self.scatter_time += scatter_time - pfn_time
+        self.rpn_time += rpn_time - scatter_time
+        self.heads_time += heads_time - rpn_time
+
+        return preds_dict
 
     def forward(self, example):
         voxels = example["voxels"]
@@ -585,7 +873,7 @@ class PointPillars(nn.Module):
         stride_vx_h = np.array(features.shape[0])
         stride_vx_d = cuda.mem_alloc(stride_vx_h.nbytes)
         cuda.memcpy_htod(stride_vx_d, stride_vx_h)
-        self.middle_feature_extractor_cuda.reset()
+        self.scatter.reset()
         torch.cuda.synchronize()
         voxel_features_time = time.time()
         spatial_features_cuda_d = self.middle_feature_extractor_cuda.run(voxel_d, coors_d, stride_vx_d)
@@ -623,8 +911,10 @@ class PointPillars(nn.Module):
         # cls_preds, box_preds, dir_preds = self.heads(rpn_feature)
         rpn_feature_time = time.time()
 
-        self.heads.head_context.execute_async_v2(bindings=[int(self.rpn_out_d), int(self.heads.cls_preds_d_o), int(self.heads.box_preds_d_o), int(self.heads.dir_preds_d_o)],
-                                          stream_handle=stream.handle)
+        self.heads.head_context.execute_async_v2(
+            bindings=[int(self.rpn_out_d), int(self.heads.cls_preds_d_o), int(self.heads.box_preds_d_o),
+                      int(self.heads.dir_preds_d_o)],
+            stream_handle=stream.handle)
         stream.synchronize()
         heads_time = time.time()
         cuda.memcpy_dtoh_async(self.heads.cls_preds_h_o, self.heads.cls_preds_d_o, stream)
@@ -643,24 +933,12 @@ class PointPillars(nn.Module):
         }
         torch.cuda.synchronize()
 
-
         self.voxel_features_time += voxel_features_time - start
         self.spatial_features_time += spatial_features_time - voxel_features_time
         self.rpn_feature_time += rpn_feature_time - spatial_features_time
         self.heads_time += heads_time - rpn_feature_time
 
         return preds_dict
-
-    def pfn_infer(self, h_input):
-        self.context.set_binding_shape(0, h_input.shape)
-        stream = cuda.Stream()
-        cuda.memcpy_htod_async(self.d_input, h_input, stream)
-        self.context.execute_async_v2(bindings=[int(self.d_input), int(self.rpn_out_d)], stream_handle=stream.handle)
-        cuda.memcpy_dtoh_async(self.h_output, self.d_output, stream)
-        stream.synchronize()
-        size = h_input.shape[0] * 64
-        h_output = self.h_output[:size]
-        return h_output
 
     def export(self, example):
         voxels = example["voxels"]
@@ -694,8 +972,8 @@ class PointPillars(nn.Module):
 
         voxel_features = self.pillar_point_net(features)
         voxel_features = voxel_features.squeeze()
-        # pfn_onnx_file_path = '../deployment/pfn.onnx'
-        # pfn_engine_path = '../deployment/pfn16.engine'
+        pfn_onnx_file_path = '../deployment/pfn.onnx'
+        pfn_engine_path = '../deployment/pfn16.engine'
         # export(self.pillar_point_net, features, pfn_onnx_file_path, dynamic=True)
         # build_engine(pfn_onnx_file_path, pfn_engine_path, dynamic=True)
         # exit(0)
@@ -707,13 +985,13 @@ class PointPillars(nn.Module):
         # voxel_features_np = voxel_features.cpu().numpy()
 
         spatial_features = self.middle_feature_extractor(voxel_features, coors)
-        rpn_onnx_file_path = '../deployment/rpn.onnx'
-        rpn_engine_path = '../deployment/rpn16.engine'
+        rpn_onnx_file_path = '../deployment/rpn_inst2.onnx'
+        rpn_engine_path = '../deployment/rpn_inst2.engine'
 
         rpn_feature = self.rpn(spatial_features)
-        # export(self.rpn, spatial_features, rpn_onnx_file_path, dynamic=False)
-        # build_engine(rpn_onnx_file_path, rpn_engine_path, dynamic=False)
-        # exit(0)
+        export(self.rpn, spatial_features, rpn_onnx_file_path, dynamic=False)
+        build_engine(rpn_onnx_file_path, rpn_engine_path, dynamic=False)
+        exit(0)
 
         # preds_dict = self.heads(rpn_feature)
 
@@ -722,7 +1000,8 @@ class PointPillars(nn.Module):
         head_onnx_file_path = '../deployment/head.onnx'
         head_engine_path = '../deployment/head16.engine'
 
-        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False, input_names=['inputs'], output_names=['cls_preds', 'box_preds', 'dir_preds'])
+        export(self.heads, rpn_feature, head_onnx_file_path, dynamic=False, input_names=['inputs'],
+               output_names=['cls_preds', 'box_preds', 'dir_preds'])
         build_engine(head_onnx_file_path, head_engine_path, dynamic=False)
         exit(0)
 
@@ -787,3 +1066,13 @@ class Resnet2(nn.Module):
     def forward(self, x):
         out = x + self.conv_block(x)
         return out
+
+
+class Holder(pycuda.driver.PointerHolderBase):
+    def __init__(self, t):
+        super(Holder, self).__init__()
+        self.t = t
+        self.gpudata = t.data_ptr()
+
+    def get_pointer(self):
+        return self.t.data_ptr()

@@ -4,7 +4,7 @@ import os
 import time
 import json
 import copy
-from networks.pointpillars8_trt import PointPillars
+
 from framework.voxel_generator import VoxelGenerator, VoxelGenerator_trt
 from framework.anchor_assigner import AnchorAssigner
 from framework.loss_generator import LossGenerator
@@ -12,7 +12,7 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-
+from networks.pointpillars8_trt import PointPillars
 # from networks.pointpillars8_shared import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
@@ -245,9 +245,9 @@ def infer():
     print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
     print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
 
-    print("voxel_features time : \t\t%.5f" % (net.voxel_features_time / len_infos))
-    print("spatial_features time : \t%.5f" % (net.spatial_features_time / len_infos))
-    print("rpn_feature time : \t\t\t%.5f" % (net.rpn_feature_time / len_infos))
+    print("pfn_time time : \t\t%.5f" % (net.pfn_time / len_infos))
+    print("scatter time : \t%.5f" % (net.scatter_time / len_infos))
+    print("rpn time : \t\t\t%.5f" % (net.rpn_time / len_infos))
     print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
 
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
@@ -281,12 +281,11 @@ def infer_trt():
     infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
     net = PointPillars(config)
 
-
-    model_path = Path(config['model_path']) / config['experiment']
-    latest_model_path = model_path / '155000.pth'
-
-    checkpoint = torch.load(latest_model_path, map_location=lambda storage, loc: storage)
-    net.load_state_dict(checkpoint['model_state_dict'])
+    # model_path = Path(config['model_path']) / config['experiment']
+    # latest_model_path = model_path / '265000.pth'
+    #
+    # checkpoint = torch.load(latest_model_path, map_location=lambda storage, loc: storage)
+    # net.load_state_dict(checkpoint['model_state_dict'])
     print('model loaded')
     net.to(device)
     # net.half()
@@ -308,7 +307,7 @@ def infer_trt():
         v_path = data_root / info['velodyne_path']
         points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
         start_time = time.time()
-        example = infer_data.get(points)
+        example = infer_data.get(points, toTorch=True)
         pre_time = time.time()
         with torch.no_grad():
             # inputs = (example["voxels"], example["num_points_per_voxel"], example["coordinates"], example["voxel_num"])
@@ -331,12 +330,17 @@ def infer_trt():
     print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
     print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
 
-    print("voxel_features time : \t\t%.5f" % (net.voxel_features_time / len_infos))
-    print("spatial_features time : \t%.5f" % (net.spatial_features_time / len_infos))
-    print("rpn_feature time : \t\t\t%.5f" % (net.rpn_feature_time / len_infos))
+    print("pfn_time time : \t\t\t%.5f" % (net.pfn_time / len_infos))
+    print("scatter time : \t\t\t\t%.5f" % (net.scatter_time / len_infos))
+    print("rpn time : \t\t\t\t\t%.5f" % (net.rpn_time / len_infos))
     print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
 
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
+
+    print("p1 time : \t\t\t\t\t%.5f" % (inference.p1 / len_infos))
+    print("p2 time : \t\t\t\t\t%.5f" % (inference.p2 / len_infos))
+    print("p3 time : \t\t\t\t\t%.5f" % (inference.p3 / len_infos))
+    print("p4 time : \t\t\t\t\t%.5f" % (inference.p4 / len_infos))
 
     dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
     if not os.path.exists(dt_path):

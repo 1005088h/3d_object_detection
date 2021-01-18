@@ -40,38 +40,38 @@ class Inference:
             cls_preds = cls_preds_all[a_range[0]: a_range[1]]
             dir_preds = dir_preds_all[a_range[0]: a_range[1]]
             anchors = self.anchors[a_range[0]: a_range[1]]
-
+            p1 = time.time()
             ## Anchor mask
             box_preds = box_preds[a_mask]
             cls_preds = cls_preds[a_mask]
             dir_preds = dir_preds[a_mask]
             anchors = anchors[a_mask]
-
+            p2 = time.time()
+            torch.cuda.synchronize()
             cls_scores = torch.sigmoid(cls_preds)
+            torch.cuda.synchronize()
+
             top_scores = torch.max(cls_scores, dim=-1)[0]
             dir_labels = torch.max(dir_preds, dim=-1)[1]
 
             selected = None
             ## Score mask
             top_scores_keep = top_scores >= self._nms_score_threshold
-
+            p3 = time.time()
             if top_scores_keep.any():
                 top_scores = top_scores[top_scores_keep]
                 box_preds = box_preds[top_scores_keep]
                 dir_labels = dir_labels[top_scores_keep]
                 anchors = anchors[top_scores_keep]
+                torch.cuda.synchronize()
 
                 # if self._nms_pre_max_size is not None:
                 num_keeped_scores = top_scores.shape[0]
                 pre_max_size = min(num_keeped_scores, self._nms_pre_max_size)
-
-                torch.cuda.synchronize()
-                p1 = time.time()
-
                 top_scores, indices = torch.topk(top_scores, k=pre_max_size)
 
                 torch.cuda.synchronize()
-                p2 = time.time()
+
                 top_scores = top_scores.detach().cpu().numpy()
                 box_preds = box_preds[indices].detach().cpu().numpy()
                 dir_labels = dir_labels[indices].detach().cpu().numpy()
@@ -83,7 +83,6 @@ class Inference:
                 boxes_for_nms = box_np_ops.corner_to_standup_nd(box_preds_corners)
 
                 torch.cuda.synchronize()
-                p3 = time.time()
 
                 selected = nms(
                     boxes_for_nms,
@@ -181,7 +180,6 @@ class Inference:
                 torch.cuda.synchronize()
                 p1 = time.time()
                 top_scores, indices = torch.topk(top_scores, k=pre_max_size)
-
 
                 box_preds = box_preds[indices]
                 dir_labels = dir_labels[indices]

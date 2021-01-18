@@ -125,8 +125,7 @@ class RPN(nn.Module):
         self._use_direction_classifier = use_direction_classifier
         self.out_plane = sum(num_upsample_filters)
 
-        norm_layer = change_default_args(
-            eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
+        norm_layer = change_default_args(eps=1e-3, momentum=0.01)(nn.InstanceNorm2d)
         Conv2d = change_default_args(bias=False)(nn.Conv2d)
         ConvTranspose2d = change_default_args(bias=False)(nn.ConvTranspose2d)
 
@@ -357,31 +356,28 @@ class PointPillars(nn.Module):
 
         self.rpn = RPN(num_rpn_input_filters)
         self.heads = SharedHead(self.rpn.out_plane)
-        self.voxel_features_time = 0.0
-        self.spatial_features_time = 0.0
-        self.rpn_feature_time = 0.0
-        self.heads_time = 0.0
+        self.pfn_time, self.rpn_time, self.scatter_time, self.heads_time = 0.0, 0.0, 0.0, 0.0
 
     def forward(self, example):
         start = time.time()
         voxel_features = self.pillar_point_net(example["voxels"], example["num_points_per_voxel"],
                                                example["coordinates"])
         torch.cuda.synchronize()
-        voxel_features_time = time.time()
+        pfn_time = time.time()
         spatial_features = self.middle_feature_extractor(voxel_features, example["coordinates"])
         torch.cuda.synchronize()
-        spatial_features_time = time.time()
+        scatter_time = time.time()
         rpn_feature = self.rpn(spatial_features)
         torch.cuda.synchronize()
-        rpn_feature_time = time.time()
+        rpn_time = time.time()
         preds_dict = self.heads(rpn_feature)
         torch.cuda.synchronize()
         heads_time = time.time()
 
-        self.voxel_features_time += voxel_features_time - start
-        self.spatial_features_time += spatial_features_time - voxel_features_time
-        self.rpn_feature_time += rpn_feature_time - spatial_features_time
-        self.heads_time += heads_time - rpn_feature_time
+        self.pfn_time += pfn_time - start
+        self.scatter_time += scatter_time - pfn_time
+        self.rpn_time += rpn_time - scatter_time
+        self.heads_time += heads_time - rpn_time
 
         return preds_dict
 

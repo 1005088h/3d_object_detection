@@ -210,7 +210,7 @@ class InferData:
         self.convert_time = 0.0
         self.device = config['device']
 
-    def get(self, points):
+    def get(self, points, toTorch=True):
         start = time.time()
         voxels, coors, num_points_per_voxel = self.voxel_generator.generate(points)
         voxel_time = time.time()
@@ -220,10 +220,13 @@ class InferData:
         mask_time = time.time()
         example = {'voxels': voxels, 'coordinates': coors, 'num_points_per_voxel': num_points_per_voxel,
                    'anchors_mask': anchors_mask}
-        example = example_convert_to_torch(example, self.dtype, device=self.device)
-        convert_time = time.time()
+        if toTorch:
+            example = example_convert_to_torch(example, self.dtype, device=self.device)
+            convert_time = time.time()
+            self.convert_time += convert_time - mask_time
 
         self.voxel_time += voxel_time - start
         self.mask_time += mask_time - voxel_time
-        self.convert_time += convert_time - mask_time
+
         return example
+
