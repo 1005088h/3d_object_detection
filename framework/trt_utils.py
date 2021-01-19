@@ -1,5 +1,7 @@
 import onnx
 import tensorrt as trt
+import torch
+
 
 def export_onnx(model, input, onnx_file_path, dynamic=False, input_names=['input'], output_names=['output']):
     if dynamic:

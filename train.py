@@ -12,8 +12,8 @@ from framework.dataset import GenericDataset, InferData
 from framework.metrics import Metric
 from framework.inference import Inference
 from framework.utils import merge_second_batch, worker_init_fn, example_convert_to_torch
-from networks.pointpillars8_trt import PointPillars
-# from networks.pointpillars8_shared import PointPillars
+from networks.pointpillars_trt import PointPillars
+# from networks.pointpillars8_export import PointPillars
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -270,6 +270,160 @@ def infer():
         print(eval_str)
 
 
+def trt_eval():
+    with open('configs/ntusl_20cm.json', 'r') as f:
+        config = json.load(f)
+    device = torch.device("cuda:0")
+    config['device'] = device
+    voxel_generator = VoxelGenerator(config)
+    anchor_assigner = AnchorAssigner(config)
+    inference = Inference(config, anchor_assigner)
+    infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
+    pfn_engine_path = '../deployment/pfn16.engine'
+    rpn_engine_path = '../deployment/rpn16.engine'
+    head_engine_path = '../deployment/head16.engine'
+
+    net = PointPillars(config, pfn_engine_path, rpn_engine_path, head_engine_path)
+
+    data_root = Path(config['data_root'])
+    info_paths = config['eval_info']
+    infos = []
+    for info_path in info_paths:
+        info_path = data_root / info_path
+        with open(info_path, 'rb') as f:
+            infos += pickle.load(f)
+    changeInfo(infos)
+    dt_annos = []
+    time_elapse, pre_time_avg, net_time_avg, post_time_avg = 0.0, 0.0, 0.0, 0.0
+    len_infos = len(infos)
+    for idx, info in enumerate(infos):
+        print('\ridx %d' % idx, end='')
+        v_path = data_root / info['velodyne_path']
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        start_time = time.time()
+        example = infer_data.get(points, toTorch=True)
+        pre_time = time.time()
+        with torch.no_grad():
+            preds_dict = net(example)
+            torch.cuda.synchronize()
+        net_time = time.time()
+        dt_annos += inference.infer_gpu(example, preds_dict)
+
+        post_time = time.time()
+
+        pre_time_avg += pre_time - start_time
+        net_time_avg += net_time - pre_time
+        post_time_avg += post_time - net_time
+        time_elapse += post_time - start_time
+
+    print("\naverage time : \t\t\t%.5f" % (time_elapse / len_infos))
+    print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
+    print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
+
+    # print("pfn_time time : \t\t\t%.5f" % (net.pfn_time / len_infos))
+    # print("scatter time : \t\t\t\t%.5f" % (net.scatter_time / len_infos))
+    # print("rpn time : \t\t\t\t\t%.5f" % (net.rpn_time / len_infos))
+    # print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
+
+    print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
+
+    print("p1 time : \t\t\t\t\t%.5f" % (inference.p1 / len_infos))
+    print("p2 time : \t\t\t\t\t%.5f" % (inference.p2 / len_infos))
+    print("p3 time : \t\t\t\t\t%.5f" % (inference.p3 / len_infos))
+    print("p4 time : \t\t\t\t\t%.5f" % (inference.p4 / len_infos))
+
+    dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
+    if not os.path.exists(dt_path):
+        os.makedirs(dt_path)
+
+    with open(dt_path / config['dt_info'], 'wb') as f:
+        pickle.dump(dt_annos, f)
+    gt_annos = [info["annos"] for info in infos]
+    eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
+    for range_thresh in np.arange(80.0, 90.0, 10.0):
+        APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes, range_thresh)
+        print(eval_str)
+
+
+def trt_export():
+    with open('configs/ntusl_20cm.json', 'r') as f:
+        config = json.load(f)
+    device = torch.device("cuda:0")
+    config['device'] = device
+    voxel_generator = VoxelGenerator(config)
+    anchor_assigner = AnchorAssigner(config)
+    inference = Inference(config, anchor_assigner)
+    infer_data = InferData(config, voxel_generator, anchor_assigner, torch.float32)
+    net = PointPillars(config)
+
+    model_path = Path(config['model_path']) / config['experiment'] / '155000.pth'
+    checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+    net.load_state_dict(checkpoint['model_state_dict'])
+    print('model loaded')
+    net.to(device)
+    net.eval()
+
+    data_root = Path(config['data_root'])
+    info_paths = config['eval_info']
+    infos = []
+    for info_path in info_paths:
+        info_path = data_root / info_path
+        with open(info_path, 'rb') as f:
+            infos += pickle.load(f)
+    changeInfo(infos)
+    dt_annos = []
+    time_elapse, pre_time_avg, net_time_avg, post_time_avg = 0.0, 0.0, 0.0, 0.0
+    len_infos = len(infos)
+    for idx, info in enumerate(infos):
+        print('\ridx %d' % idx, end='')
+        v_path = data_root / info['velodyne_path']
+        points = np.fromfile(v_path, dtype=np.float32, count=-1).reshape([-1, 4])
+        start_time = time.time()
+        example = infer_data.get(points, toTorch=True)
+        pre_time = time.time()
+        with torch.no_grad():
+            preds_dict = net.export(example)
+            # preds_dict = net(example)
+            torch.cuda.synchronize()
+        net_time = time.time()
+        dt_annos += inference.infer_gpu(example, preds_dict)
+
+        post_time = time.time()
+
+        pre_time_avg += pre_time - start_time
+        net_time_avg += net_time - pre_time
+        post_time_avg += post_time - net_time
+        time_elapse += post_time - start_time
+
+    print("\naverage time : \t\t\t%.5f" % (time_elapse / len_infos))
+    print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
+    print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
+
+    # print("pfn_time time : \t\t\t%.5f" % (net.pfn_time / len_infos))
+    # print("scatter time : \t\t\t\t%.5f" % (net.scatter_time / len_infos))
+    # print("rpn time : \t\t\t\t\t%.5f" % (net.rpn_time / len_infos))
+    # print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
+
+    print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
+
+    print("p1 time : \t\t\t\t\t%.5f" % (inference.p1 / len_infos))
+    print("p2 time : \t\t\t\t\t%.5f" % (inference.p2 / len_infos))
+    print("p3 time : \t\t\t\t\t%.5f" % (inference.p3 / len_infos))
+    print("p4 time : \t\t\t\t\t%.5f" % (inference.p4 / len_infos))
+
+    dt_path = Path(config['data_root']) / config['result_path'] / config['experiment']
+    if not os.path.exists(dt_path):
+        os.makedirs(dt_path)
+
+    with open(dt_path / config['dt_info'], 'wb') as f:
+        pickle.dump(dt_annos, f)
+    gt_annos = [info["annos"] for info in infos]
+    eval_classes = ["vehicle", "pedestrian", "cyclist"]  # ["vehicle", "pedestrian", "cyclist"]
+    for range_thresh in np.arange(80.0, 90.0, 10.0):
+        APs, eval_str = get_official_eval_result(gt_annos, dt_annos, eval_classes, range_thresh)
+        print(eval_str)
+
+
 def infer_trt():
     with open('configs/ntusl_20cm.json', 'r') as f:
         config = json.load(f)
@@ -330,10 +484,10 @@ def infer_trt():
     print("pre-processing time : \t%.5f" % (pre_time_avg / len_infos))
     print("network time : \t\t\t%.5f" % (net_time_avg / len_infos))
 
-    print("pfn_time time : \t\t\t%.5f" % (net.pfn_time / len_infos))
-    print("scatter time : \t\t\t\t%.5f" % (net.scatter_time / len_infos))
-    print("rpn time : \t\t\t\t\t%.5f" % (net.rpn_time / len_infos))
-    print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
+    # print("pfn_time time : \t\t\t%.5f" % (net.pfn_time / len_infos))
+    # print("scatter time : \t\t\t\t%.5f" % (net.scatter_time / len_infos))
+    # print("rpn time : \t\t\t\t\t%.5f" % (net.rpn_time / len_infos))
+    # print("heads time : \t\t\t\t%.5f" % (net.heads_time / len_infos))
 
     print("post-processing time : \t%.5f" % (post_time_avg / len_infos))
 
@@ -425,8 +579,7 @@ class PointPillarsNode:
 if __name__ == "__main__":
     # train()
     # infer()
-
-    infer_trt()
+    trt_eval()
     # PointPillarsNode().spin()
 
 '''

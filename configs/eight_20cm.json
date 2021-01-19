@@ -6,7 +6,7 @@
   "eval_info": ["av1_ji/eval/data_info.pkl", "mb3_bb1/eval/data_info.pkl", "mb3_bb2/eval/data_info.pkl", "mb3_cetran_syn_ped/eval/data_info.pkl"
   ,"mb3_ji/eval/data_info.pkl", "ntu/eval/data_info.pkl", "soonlee/eval/data_info.pkl"],
   "dt_info": "dt_info.pkl",
-  "experiment": "eight_pillar8_shared_batch",
+  "experiment": "ntusl_pillar8_inst",
   "create_mask_gpu": 0,
   "result_path": "results/",
   "batch_size": 1,
